@@ -25,5 +25,11 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 source = "vcs"
 
+[tool.hatch.version.raw-options]
+# PyPI/TestPyPI reject local version segments (the "+g<hash>" suffix) --
+# drop them so untagged builds (main-branch TestPyPI publishes) still get an
+# uploadable version like "1.0.1.dev1" instead of "1.0.1.dev1+g0cc0f4a45".
+local_scheme = "no-local-version"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/runtipi_companion"]
