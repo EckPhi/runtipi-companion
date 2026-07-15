@@ -77,3 +77,87 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  # Post-build test: install the *built wheel* plus real rclone and
+  # tailscale, then run the full backup -> sync -> prune -> restore cycle
+  # (tests/e2e/e2e.sh). Uses a seeded runtipi directory layout with a stub
+  # runtipi-cli: apps can only be installed through the runtipi web UI, and
+  # the backup/restore flow never invokes the CLI when apps aren't running.
+  e2e:
+    name: E2E (built wheel + rclone + tailscale)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install the built wheel
+        run: pip install dist/*.whl
+
+      - name: Install rclone
+        run: sudo apt-get update && sudo apt-get install -y rclone
+
+      - name: Install tailscale
+        run: curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Run end-to-end suite
+        run: bash tests/e2e/e2e.sh
+
+  # Same suite, but against a real Runtipi install from the official
+  # installer (docker compose stack + real runtipi-cli). Non-blocking:
+  # upstream installer or image changes shouldn't fail our CI.
+  e2e-real-runtipi:
+    name: E2E against a real Runtipi install
+    runs-on: ubuntu-latest
+    needs: build
+    continue-on-error: true
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install the built wheel into a venv
+        run: |
+          python -m venv "$HOME/rtc-venv"
+          "$HOME/rtc-venv/bin/pip" install dist/*.whl
+
+      - name: Install rclone
+        run: sudo apt-get update && sudo apt-get install -y rclone
+
+      - name: Install tailscale
+        run: curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Install Runtipi (official installer)
+        run: |
+          mkdir -p "$HOME/runtipi-e2e"
+          cd "$HOME/runtipi-e2e"
+          curl -L https://setup.runtipi.io | bash
+
+      - name: Locate runtipi-cli
+        run: |
+          CLI=$(sudo find "$HOME/runtipi-e2e" /opt -maxdepth 3 -name runtipi-cli -type f 2>/dev/null | head -1)
+          if [ -z "$CLI" ]; then
+            echo "runtipi-cli not found after install" >&2
+            exit 1
+          fi
+          echo "RUNTIPI_DIR=$(dirname "$CLI")" >> "$GITHUB_ENV"
+
+      # Root, because the installer creates the runtipi tree root-owned.
+      - name: Run end-to-end suite against the real install
+        run: sudo env "PATH=$HOME/rtc-venv/bin:$PATH" RUNTIPI_DIR="$RUNTIPI_DIR" bash tests/e2e/e2e.sh
