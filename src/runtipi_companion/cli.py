@@ -252,7 +252,11 @@ def security_harden(
     ssh: bool = typer.Option(False, "--ssh"),
     ufw: bool = typer.Option(False, "--ufw"),
     fail2ban: bool = typer.Option(False, "--fail2ban"),
+    tailscale_security: bool = typer.Option(
+        False, "--tailscale-security", help="VPN-only lockdown: tailscale ssh + ufw allow-tailscale0-only."
+    ),
     all_: bool = typer.Option(False, "--all"),
+    interactive: bool = typer.Option(False, "--interactive", "-i", help="Pick what to harden from a menu."),
     force: bool = typer.Option(False, "--force", help="Skip the authorized_keys safety check for SSH hardening."),
     config: Optional[str] = ConfigOption,
     yes: bool = YesOption,
@@ -260,17 +264,30 @@ def security_harden(
 ):
     """Apply the runtipi VPS-security / server-hardening checklist. Defaults
     to a dry-run preview -- pass --apply to actually change sshd_config,
-    firewall rules, or install fail2ban."""
+    firewall rules, install fail2ban, or lock down to tailscale-only access."""
     cfg = _load(config)
-    if not any([ssh, ufw, fail2ban, all_]):
-        console.print("Nothing selected. Pass --ssh, --ufw, --fail2ban, or --all.")
+    selected = {"ssh": ssh, "ufw": ufw, "fail2ban": fail2ban, "tailscale_security": tailscale_security}
+
+    if all_:
+        selected = {k: True for k in selected}
+    elif interactive or (not any(selected.values()) and sys.stdin.isatty()):
+        selected = tui.select_hardening()
+    elif not any(selected.values()):
+        console.print("Nothing selected. Pass --ssh, --ufw, --fail2ban, --tailscale-security, --all, or --interactive.")
         raise typer.Exit(1)
-    if ssh or all_:
+
+    if not any(selected.values()):
+        console.print("Nothing selected.")
+        raise typer.Exit(0)
+
+    if selected["ssh"]:
         security_mod.harden_ssh(cfg, dry_run=dry_run, assume_yes=yes, force=force)
-    if ufw or all_:
+    if selected["ufw"]:
         security_mod.harden_ufw(cfg, dry_run=dry_run, assume_yes=yes)
-    if fail2ban or all_:
+    if selected["fail2ban"]:
         security_mod.harden_fail2ban(cfg, dry_run=dry_run, assume_yes=yes)
+    if selected["tailscale_security"]:
+        security_mod.harden_tailscale_security(cfg, dry_run=dry_run, assume_yes=yes)
 
 
 @security_app.command("status")

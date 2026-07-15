@@ -27,6 +27,35 @@ BASE_CONFIG = """
 """
 
 
+# ---- multi_select / select_hardening ----
+
+
+def test_multi_select_specific_numbers(monkeypatch):
+    ScriptedPrompts(monkeypatch, ["1, 3"])
+    assert tui.multi_select("Pick", ["a", "b", "c"]) == [0, 2]
+
+
+def test_multi_select_all(monkeypatch):
+    ScriptedPrompts(monkeypatch, ["all"])
+    assert tui.multi_select("Pick", ["a", "b", "c"]) == [0, 1, 2]
+
+
+def test_multi_select_empty_means_none(monkeypatch):
+    ScriptedPrompts(monkeypatch, [""])
+    assert tui.multi_select("Pick", ["a", "b", "c"]) == []
+
+
+def test_multi_select_ignores_out_of_range_and_junk(monkeypatch):
+    ScriptedPrompts(monkeypatch, ["1, 99, x, 2"])
+    assert tui.multi_select("Pick", ["a", "b", "c"]) == [0, 1]
+
+
+def test_select_hardening_maps_indices_to_keys(monkeypatch):
+    ScriptedPrompts(monkeypatch, ["1, 4"])
+    selected = tui.select_hardening()
+    assert selected == {"ssh": True, "ufw": False, "fail2ban": False, "tailscale_security": True}
+
+
 # ---- manage_remotes ----
 
 

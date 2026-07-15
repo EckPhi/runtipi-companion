@@ -64,6 +64,14 @@ security:
     enabled: true
     maxretry: 3
     bantime: 3600
+  # VPN-only lockdown: allow inbound traffic only on the tailscale0 interface
+  # (plus tailscale's own coordination port) and switch SSH to `tailscale ssh`.
+  # Requires tailscale to already be installed and up -- see the `tailscale`
+  # section below. Apply with `security harden --tailscale-security --apply`.
+  tailscale_only:
+    enabled: false
+    tailscale_ssh: true
+    tailscale_port_udp: 41641
 
 tailscale:
   enabled: false

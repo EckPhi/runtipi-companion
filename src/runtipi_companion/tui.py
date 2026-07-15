@@ -29,6 +29,50 @@ class RestoreSelection:
     from_remote: Optional[str] = None
 
 
+def multi_select(prompt: str, options: list) -> list:
+    """Numbered checklist. User enters comma-separated numbers, 'all', or
+    empty for none. Returns the selected indices, sorted."""
+    for i, opt in enumerate(options, 1):
+        console.print(f"  {i}. {opt}")
+    raw = cw._ask(f"{prompt} (comma-separated numbers, 'all', or empty for none)", default="")
+    raw = raw.strip().lower()
+    if raw in ("all", "a"):
+        return list(range(len(options)))
+    if not raw:
+        return []
+    indices = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            n = int(part)
+        except ValueError:
+            console.print(f"[red]Ignoring '{part}' -- not a number.[/red]")
+            continue
+        if 1 <= n <= len(options):
+            indices.add(n - 1)
+        else:
+            console.print(f"[red]Ignoring {n} -- out of range.[/red]")
+    return sorted(indices)
+
+
+HARDENING_ITEMS = [
+    ("ssh", "SSH (disable password auth / root login, optional port change)"),
+    ("ufw", "UFW firewall (allow configured ports, default deny)"),
+    ("fail2ban", "fail2ban (ban repeated SSH auth failures)"),
+    ("tailscale_security", "Tailscale-only access (VPN-only lockdown: tailscale ssh + ufw allow-tailscale0-only)"),
+]
+
+
+def select_hardening() -> dict:
+    """Interactive checklist for `security harden`. Returns {key: bool} for
+    every item in HARDENING_ITEMS."""
+    console.print("[bold]Select what to harden[/bold]")
+    indices = multi_select("Toggle items to harden", [label for _, label in HARDENING_ITEMS])
+    return {key: (i in indices) for i, (key, _) in enumerate(HARDENING_ITEMS)}
+
+
 def pick(prompt: str, options: list) -> int:
     """Numbered menu. Single option is auto-selected."""
     if len(options) == 1:

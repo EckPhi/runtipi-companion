@@ -88,10 +88,23 @@ class Fail2BanConfig:
 
 
 @dataclass
+class TailscaleOnlyConfig:
+    """VPN-only lockdown: reachable only over the tailscale0 interface.
+    See https://tailscale.com/kb/1077/secure-server-ufw and the runtipi VPS
+    security guide's "Option A: VPN access only".
+    """
+
+    enabled: bool = False
+    tailscale_ssh: bool = True  # `tailscale up --ssh`, replaces public sshd exposure
+    tailscale_port_udp: int = 41641  # tailscale's own coordination port; must stay reachable publicly
+
+
+@dataclass
 class SecurityConfig:
     ssh: SSHConfig = field(default_factory=SSHConfig)
     ufw: UFWConfig = field(default_factory=UFWConfig)
     fail2ban: Fail2BanConfig = field(default_factory=Fail2BanConfig)
+    tailscale_only: TailscaleOnlyConfig = field(default_factory=TailscaleOnlyConfig)
 
 
 @dataclass
@@ -205,6 +218,7 @@ def load_config(path: Optional[str] = None) -> CompanionConfig:
         ssh = s.get("ssh", {}) or {}
         ufw = s.get("ufw", {}) or {}
         f2b = s.get("fail2ban", {}) or {}
+        ts_only = s.get("tailscale_only", {}) or {}
         cfg.security = SecurityConfig(
             ssh=SSHConfig(
                 disable_password_auth=ssh.get("disable_password_auth", True),
@@ -219,6 +233,11 @@ def load_config(path: Optional[str] = None) -> CompanionConfig:
                 enabled=f2b.get("enabled", True),
                 maxretry=f2b.get("maxretry", 3),
                 bantime=f2b.get("bantime", 3600),
+            ),
+            tailscale_only=TailscaleOnlyConfig(
+                enabled=ts_only.get("enabled", False),
+                tailscale_ssh=ts_only.get("tailscale_ssh", True),
+                tailscale_port_udp=ts_only.get("tailscale_port_udp", 41641),
             ),
         )
 

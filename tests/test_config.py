@@ -21,6 +21,25 @@ def test_load_minimal_config(tmp_path):
     assert cfg.runtipi.path == "/opt/runtipi"
     assert cfg.backup_local_path == "/opt/runtipi/backups"
     assert cfg.backup.schedules["daily"].retention == 3
+    assert cfg.security.tailscale_only.enabled is False
+    assert cfg.security.tailscale_only.tailscale_ssh is True
+    assert cfg.security.tailscale_only.tailscale_port_udp == 41641
+
+
+def test_tailscale_only_config(tmp_path):
+    p = write_config(tmp_path, """
+        runtipi:
+          path: /opt/runtipi
+        security:
+          tailscale_only:
+            enabled: true
+            tailscale_ssh: false
+            tailscale_port_udp: 12345
+    """)
+    cfg = load_config(str(p))
+    assert cfg.security.tailscale_only.enabled is True
+    assert cfg.security.tailscale_only.tailscale_ssh is False
+    assert cfg.security.tailscale_only.tailscale_port_udp == 12345
 
 
 def test_remote_requires_schedule(tmp_path):

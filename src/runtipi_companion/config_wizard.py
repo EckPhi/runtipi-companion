@@ -168,11 +168,23 @@ def gather_answers() -> dict:
 
     console.print("\n[bold]Tailscale[/bold]")
     ts_enabled = _ask_bool("Set up Tailscale for private remote access?", default=False)
+    tailscale_only = False
+    if ts_enabled:
+        tailscale_only = _ask_bool(
+            "Lock this box down to tailscale-only access (tailscale ssh + ufw allow-tailscale0-only, "
+            "cuts public access to everything)?",
+            default=False,
+        )
+    security["tailscale_only"] = {
+        "enabled": tailscale_only,
+        "tailscale_ssh": tailscale_only,
+        "tailscale_port_udp": 41641,
+    }
     tailscale = {
         "enabled": ts_enabled,
         "auth_key_env": "TAILSCALE_AUTHKEY",
         "advertise_exit_node": ts_enabled and _ask_bool("Advertise this machine as an exit node?", default=False),
-        "ssh": ts_enabled and _ask_bool("Enable Tailscale SSH?", default=False),
+        "ssh": ts_enabled and (tailscale_only or _ask_bool("Enable Tailscale SSH?", default=False)),
     }
 
     console.print("\n[bold]Notifications[/bold]")

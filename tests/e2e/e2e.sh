@@ -7,7 +7,12 @@
 #     restore flow never needs the CLI when apps aren't running.
 #   - real tailscale if installed (status + dry-run install plan)
 #
-# Run locally:  bash tests/e2e/e2e.sh   (needs rclone + runtipi-companion on PATH)
+# Run in Docker (recommended -- don't run this against your real host):
+#   docker build -f tests/e2e/Dockerfile -t runtipi-companion-e2e .
+#   docker run --rm runtipi-companion-e2e
+#
+# Run directly (needs rclone + tailscale + runtipi-companion on PATH):
+#   bash tests/e2e/e2e.sh
 set -euo pipefail
 
 WORK="${E2E_WORK_DIR:-$(mktemp -d)}"
@@ -65,6 +70,9 @@ backup:
       schedules:
         daily:
           retention: 1
+security:
+  tailscale_only:
+    enabled: true
 EOF
 
 "${RC[@]}" config validate --config "$CFG"
@@ -116,8 +124,19 @@ say "Update commands (dry-run)"
 "${RC[@]}" update apps --config "$CFG"
 "${RC[@]}" update appstores --config "$CFG"
 
-say "Security hardening plan (dry-run)"
-"${RC[@]}" security harden --all --config "$CFG"
+say "Security hardening plan (dry-run, all items incl. tailscale-security)"
+OUT=$("${RC[@]}" security harden --all --config "$CFG")
+echo "$OUT"
+echo "$OUT" | grep -q "Tailscale-only access plan" || fail "'security harden --all' did not include the tailscale-security plan"
+
+say "Security hardening: tailscale-security in isolation (dry-run)"
+"${RC[@]}" security harden --tailscale-security --config "$CFG"
+
+say "Security hardening: interactive TUI selection (dry-run)"
+OUT=$(printf '2\n' | "${RC[@]}" security harden --interactive --config "$CFG")
+echo "$OUT"
+echo "$OUT" | grep -q "UFW firewall plan" \
+  || fail "'security harden --interactive' did not apply the selected item"
 
 if command -v tailscale >/dev/null; then
   say "Tailscale (status + dry-run install plan)"

@@ -26,9 +26,17 @@ update) is a thin wrapper around it. What this tool adds:
 - **Security hardening** that applies the checklists from
   [VPS security](https://runtipi.io/docs/security/vps-security) and
   [Server hardening](https://runtipi.io/docs/security/server-hardening):
-  SSH key-only + no root login, UFW, fail2ban.
+  SSH key-only + no root login, UFW, fail2ban, and an optional
+  tailscale-only lockdown (see below). Pick what to apply from an
+  interactive menu, or target items individually with flags.
 - **Tailscale install + `up`**, matching the VPN-only access pattern the VPS
-  security guide recommends (don't open 80/443 publicly).
+  security guide recommends (don't open 80/443 publicly). `security harden
+  --tailscale-security` goes further, based on
+  [this UFW+tailscale writeup](https://dev.to/binsarjr/turn-your-vps-into-an-impenetrable-fortress-how-to-make-your-public-server-private-using-tailscale-and-ufw-3841):
+  it switches SSH to `tailscale ssh` and restricts UFW to allow inbound
+  traffic only on the `tailscale0` interface, so the box is unreachable
+  from the public internet entirely (only tailscale's own coordination
+  port stays open).
 - One global YAML config for all of the above.
 
 ## Safety model
@@ -56,6 +64,15 @@ Or, for local development:
 ```
 pip install -e ".[dev]"
 pytest
+```
+
+The end-to-end suite (`tests/e2e/e2e.sh`) exercises real `rclone`/`tailscale`
+binaries and applies changes for real, so run it in the provided Docker
+image rather than on your own machine:
+
+```
+docker build -f tests/e2e/Dockerfile -t runtipi-companion-e2e .
+docker run --rm runtipi-companion-e2e
 ```
 
 Requires `rclone` on `$PATH` for remote backups, and `tailscale`'s installer
@@ -88,8 +105,9 @@ runtipi-companion setup wizard --apply
 runtipi-companion backup run --type daily --apply
 runtipi-companion backup list jellyfin
 
-runtipi-companion security harden --all           # review the plan (dry-run)
-runtipi-companion security harden --all --apply    # actually apply it
+runtipi-companion security harden                  # interactive: pick what to harden
+runtipi-companion security harden --all --apply    # or apply everything at once
+runtipi-companion security harden --tailscale-security --apply   # VPN-only lockdown only
 
 runtipi-companion tailscale install --apply
 ```
@@ -136,7 +154,7 @@ runtipi-companion tailscale install|status
 
 Run `runtipi-companion <group> <command> --help` for full options.
 
-Two commands have interactive TUI modes:
+Three commands have interactive TUI modes:
 
 - `backup remotes` — add/edit/remove/enable/disable rclone backup remotes in
   your config file from a menu, including per-schedule retention. Changes are
@@ -145,6 +163,10 @@ Two commands have interactive TUI modes:
   configured remote), then the app, then the archive from a list of what
   actually exists, instead of typing filenames. Defaults to a dry-run
   preview; add `--apply` to restore for real.
+- `security harden` with no flags (or `--interactive`/`-i`) — checklist menu
+  to pick any combination of SSH / UFW / fail2ban / tailscale-only lockdown.
+  Flags (`--ssh`, `--ufw`, `--fail2ban`, `--tailscale-security`, `--all`)
+  still work for scripting and skip the menu.
 
 ## Automating backups
 

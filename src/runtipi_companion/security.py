@@ -173,6 +173,74 @@ def harden_fail2ban(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: b
     console.print("[green]fail2ban configured and running.[/green]")
 
 
+def harden_tailscale_security(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool = False) -> None:
+    """VPN-only lockdown: allow traffic only on the tailscale0 interface (plus
+    tailscale's own coordination port), and switch SSH access over to
+    `tailscale ssh`. Mirrors
+    https://dev.to/binsarjr/turn-your-vps-into-an-impenetrable-fortress-how-to-make-your-public-server-private-using-tailscale-and-ufw-3841
+    """
+    ts_cfg = cfg.security.tailscale_only
+    if not ts_cfg.enabled:
+        console.print("Tailscale-only lockdown disabled in config, skipping.")
+        return
+
+    console.print("[bold]Tailscale-only access plan[/bold]")
+    if shutil.which("tailscale") is None:
+        console.print(
+            "[red]tailscale binary not found.[/red] Run 'runtipi-companion tailscale install --apply' first."
+        )
+        return
+
+    if ts_cfg.tailscale_ssh:
+        console.print("  tailscale up --ssh")
+    console.print("  ufw allow in on tailscale0")
+    console.print(f"  ufw allow {ts_cfg.tailscale_port_udp}/udp   (tailscale's own coordination port, stays public)")
+    public_ports = sorted(set(cfg.security.ufw.allowed_tcp_ports))
+    if cfg.security.ssh.port and cfg.security.ssh.port not in public_ports:
+        public_ports.append(cfg.security.ssh.port)
+    for p in public_ports:
+        console.print(f"  ufw delete allow {p}/tcp   (was publicly allowed, now tailscale0-only)")
+    console.print("  ufw default deny incoming")
+
+    console.print(
+        "\n[yellow]After this, the box is reachable only via its 100.x.x.x tailscale IP "
+        "(or through 'tailscale ssh').[/yellow] Make sure tailscale is already up and you have "
+        "a tested connection to this machine over the tailnet before applying, or you may lock "
+        "yourself out.\n"
+    )
+
+    if dry_run:
+        console.print("[yellow]DRY-RUN[/yellow] -- no changes made. Re-run with --apply to write these.")
+        return
+
+    if not confirm(
+        "Apply tailscale-only lockdown? (public TCP access to this box will be cut, keep a tailnet "
+        "connection open in another terminal)",
+        assume_yes,
+    ):
+        console.print("Aborted.")
+        return
+
+    run(["apt-get", "install", "-y", "ufw"], sudo=True)
+
+    if ts_cfg.tailscale_ssh:
+        run(["tailscale", "up", "--ssh"], sudo=True)
+
+    run(["ufw", "allow", "in", "on", "tailscale0"], sudo=True)
+    run(["ufw", "allow", f"{ts_cfg.tailscale_port_udp}/udp"], sudo=True)
+    for p in public_ports:
+        # Rules may not exist yet on a fresh box -- absence isn't an error.
+        run(["ufw", "delete", "allow", f"{p}/tcp"], sudo=True, check=False)
+    run(["ufw", "default", "deny", "incoming"], sudo=True)
+    run(["ufw", "--force", "enable"], sudo=True)
+
+    console.print("[green]Tailscale-only lockdown applied.[/green]")
+    console.print(
+        "[yellow]Before you disconnect, open a NEW terminal and confirm you can still connect "
+        "over the tailnet (tailscale ssh user@host, or ssh over the 100.x.x.x address).[/yellow]"
+    )
+
+
 def status(cfg: CompanionConfig) -> None:
     console.print("[bold]Security status[/bold]")
     console.print("\n[bold]sshd effective config (password/root login):[/bold]")
@@ -182,3 +250,6 @@ def status(cfg: CompanionConfig) -> None:
     console.print("\n[bold]fail2ban:[/bold]")
     run(["systemctl", "is-active", "fail2ban"], check=False)
     run(["fail2ban-client", "status", "sshd"], sudo=True, check=False)
+    if cfg.security.tailscale_only.enabled:
+        console.print("\n[bold]Tailscale:[/bold]")
+        run(["tailscale", "status"], check=False)
