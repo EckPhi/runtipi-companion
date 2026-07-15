@@ -78,6 +78,33 @@ jobs:
           name: dist
           path: dist/
 
+  # Publish every main-branch build to TestPyPI so a broken sdist/wheel or
+  # metadata issue surfaces before a real release tag, not after. Skipped on
+  # PRs (forks can't hold the trusted-publisher OIDC identity anyway).
+  # Requires a TestPyPI trusted publisher for this repo/workflow
+  # (https://docs.pypi.org/trusted-publishers/) and a GitHub environment
+  # named "testpypi". No API token secrets needed.
+  publish-testpypi:
+    name: Publish to TestPyPI
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/runtipi-companion
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
   # Post-build test: install the *built wheel* plus real rclone and
   # tailscale, then run the full backup -> sync -> prune -> restore cycle
   # (tests/e2e/e2e.sh). Uses a seeded runtipi directory layout with a stub
