@@ -15,6 +15,7 @@ from . import restore as restore_mod
 from . import security as security_mod
 from . import setup_wizard
 from . import tailscale as tailscale_mod
+from . import tui
 from . import update as update_mod
 from .config import DEFAULT_CONFIG_PATHS, CompanionConfig, ConfigError, load_config
 from .notify import notify
@@ -166,13 +167,21 @@ def backup_list(
         console.print(f)
 
 
+@backup_app.command("remotes")
+def backup_remotes(config: Optional[str] = ConfigOption):
+    """Interactively add/edit/remove/toggle the rclone backup remotes in
+    your config file."""
+    if not config_wizard.manage_remotes(config):
+        raise typer.Exit(1)
+
+
 # ---- restore ----
 
 
 @restore_app.command("run")
 def restore_run(
-    app_id: str = typer.Argument(...),
-    backup_file: str = typer.Argument(..., help="Filename as shown by 'backup list' (or 'restore list')."),
+    app_id: Optional[str] = typer.Argument(None, help="App id. Omit (with no backup file) to pick interactively."),
+    backup_file: Optional[str] = typer.Argument(None, help="Filename as shown by 'backup list' (or 'restore list')."),
     store: str = typer.Option("migrated", "--store", help="App store name (see 'runtipi-cli installed')."),
     from_remote: Optional[str] = typer.Option(None, "--from-remote", help="Download from this remote first."),
     config: Optional[str] = ConfigOption,
@@ -180,6 +189,17 @@ def restore_run(
     dry_run: bool = DryRunOption,
 ):
     cfg = _load(config)
+    if app_id is None or backup_file is None:
+        if not sys.stdin.isatty():
+            console.print("[red]APP_ID and BACKUP_FILE are required when not running interactively.[/red]")
+            raise typer.Exit(1)
+        selection = tui.interactive_restore(cfg)
+        if selection is None:
+            raise typer.Exit(1)
+        app_id = selection.app_id
+        backup_file = selection.backup_file
+        store = selection.store
+        from_remote = selection.from_remote
     restore_mod.restore_backup(
         cfg, store, app_id, backup_file, from_remote=from_remote, assume_yes=yes, dry_run=dry_run
     )

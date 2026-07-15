@@ -126,7 +126,7 @@ itself independently of local disk and every other remote.
 
 ```
 runtipi-companion config   wizard|init|show|validate
-runtipi-companion backup   run|list
+runtipi-companion backup   run|list|remotes
 runtipi-companion restore  run|list
 runtipi-companion update   apps|core|appstores
 runtipi-companion setup    wizard
@@ -135,6 +135,16 @@ runtipi-companion tailscale install|status
 ```
 
 Run `runtipi-companion <group> <command> --help` for full options.
+
+Two commands have interactive TUI modes:
+
+- `backup remotes` — add/edit/remove/enable/disable rclone backup remotes in
+  your config file from a menu, including per-schedule retention. Changes are
+  validated before saving.
+- `restore run` with no arguments — pick the source (local disk or any
+  configured remote), then the app, then the archive from a list of what
+  actually exists, instead of typing filenames. Defaults to a dry-run
+  preview; add `--apply` to restore for real.
 
 ## Automating backups
 

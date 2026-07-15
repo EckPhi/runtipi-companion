@@ -17,8 +17,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.syntax import Syntax
+from rich.table import Table
 
-from .config import DEFAULT_CONFIG_PATHS, VALID_SCHEDULES, load_config
+from .config import DEFAULT_CONFIG_PATHS, VALID_SCHEDULES, ConfigError, load_config
 
 console = Console()
 
@@ -69,40 +70,49 @@ def _prompt_schedules(defaults: dict, subject: str) -> dict:
     return schedules
 
 
+def _prompt_remote_details(taken_names: set, current: Optional[dict] = None) -> Optional[dict]:
+    """Prompt for one remote's fields. When editing, `current` supplies the
+    defaults so pressing Enter keeps every existing value."""
+    cur = current or {}
+    name = _ask("  Short name for this remote (e.g. backblaze)", default=cur.get("name"))
+    if not name or name in taken_names:
+        console.print("  [red]Name must be non-empty and unique.[/red]")
+        return None
+    rclone_remote = _ask('  rclone target (e.g. "b2-runtipi:my-bucket/runtipi-backups")', default=cur.get("rclone_remote"))
+    if not rclone_remote:
+        console.print("  [red]rclone target is required, skipping this remote.[/red]")
+        return None
+    bandwidth = _or_none(_ask('  Upload bandwidth limit (e.g. "5M", empty for none)', default=cur.get("bandwidth_limit") or ""))
+    if cur.get("schedules"):
+        sched_defaults = {n: (v or {}).get("retention", 3) for n, v in cur["schedules"].items()}
+    else:
+        sched_defaults = REMOTE_RETENTION_DEFAULTS
+    schedules = _prompt_schedules(sched_defaults, f"on '{name}'")
+    if not schedules:
+        # validate_config rejects remotes without schedules; don't let the
+        # wizard produce a config that fails its own validation.
+        console.print("  [yellow]A remote needs at least one schedule -- keeping daily.[/yellow]")
+        schedules = {"daily": {"retention": REMOTE_RETENTION_DEFAULTS["daily"]}}
+    return {
+        "name": name,
+        "rclone_remote": rclone_remote,
+        "enabled": cur.get("enabled", True),
+        "bandwidth_limit": bandwidth,
+        "schedules": schedules,
+    }
+
+
 def _prompt_remotes() -> list:
     remotes = []
-    seen = set()
     console.print(
         "\nRemotes are rclone remotes (e.g. Backblaze B2, Google Drive, SFTP). "
         "Each gets its own retention per schedule. Configure the rclone side "
         "separately with 'rclone config'."
     )
     while _ask_bool("Add an off-site backup remote?", default=not remotes):
-        name = _ask("  Short name for this remote (e.g. backblaze)")
-        if not name or name in seen:
-            console.print("  [red]Name must be non-empty and unique.[/red]")
-            continue
-        rclone_remote = _ask('  rclone target (e.g. "b2-runtipi:my-bucket/runtipi-backups")')
-        if not rclone_remote:
-            console.print("  [red]rclone target is required, skipping this remote.[/red]")
-            continue
-        bandwidth = _or_none(_ask('  Upload bandwidth limit (e.g. "5M", empty for none)', default=""))
-        schedules = _prompt_schedules(REMOTE_RETENTION_DEFAULTS, f"on '{name}'")
-        if not schedules:
-            # validate_config rejects remotes without schedules; don't let the
-            # wizard produce a config that fails its own validation.
-            console.print("  [yellow]A remote needs at least one schedule -- keeping daily.[/yellow]")
-            schedules = {"daily": {"retention": REMOTE_RETENTION_DEFAULTS["daily"]}}
-        seen.add(name)
-        remotes.append(
-            {
-                "name": name,
-                "rclone_remote": rclone_remote,
-                "enabled": True,
-                "bandwidth_limit": bandwidth,
-                "schedules": schedules,
-            }
-        )
+        remote = _prompt_remote_details({r["name"] for r in remotes})
+        if remote:
+            remotes.append(remote)
     return remotes
 
 
@@ -198,6 +208,118 @@ def write_config(answers: dict, dest: Path) -> Path:
     # behind a config the CLI later refuses to read.
     load_config(str(dest))
     return dest
+
+
+def find_config_file(path: Optional[str] = None) -> Optional[Path]:
+    candidates = [Path(path)] if path else DEFAULT_CONFIG_PATHS
+    return next((p for p in candidates if p.exists()), None)
+
+
+def _remotes_table(remotes: list) -> Table:
+    table = Table(title="Backup remotes")
+    table.add_column("#", justify="right")
+    table.add_column("Name")
+    table.add_column("rclone target")
+    table.add_column("Enabled")
+    table.add_column("Retention")
+    for i, r in enumerate(remotes, 1):
+        retention = ", ".join(
+            f"{name}×{(sched or {}).get('retention', 3)}" for name, sched in (r.get("schedules") or {}).items()
+        )
+        table.add_row(
+            str(i),
+            r.get("name", "?"),
+            r.get("rclone_remote", "?"),
+            "[green]yes[/green]" if r.get("enabled", True) else "[dim]no[/dim]",
+            retention or "[red]none[/red]",
+        )
+    return table
+
+
+def _pick_remote(remotes: list) -> Optional[int]:
+    if not remotes:
+        console.print("[yellow]No remotes configured yet.[/yellow]")
+        return None
+    if len(remotes) == 1:
+        return 0
+    choice = _ask_int("Which remote (#)", 1)
+    if not 1 <= choice <= len(remotes):
+        console.print("[red]Out of range.[/red]")
+        return None
+    return choice - 1
+
+
+def manage_remotes(path: Optional[str] = None) -> bool:
+    """Interactive add/edit/remove/toggle for backup remotes in an existing
+    config file. Returns True if we exited cleanly (saved or nothing to save).
+
+    Rewrites the file through yaml.safe_dump, so hand-written comments in the
+    config are lost on save -- same trade-off as the config wizard itself.
+    """
+    chosen = find_config_file(path)
+    if chosen is None:
+        console.print(
+            "[red]No config file found.[/red] Run [bold]runtipi-companion config wizard[/bold] first."
+        )
+        return False
+
+    original_text = chosen.read_text()
+    raw = yaml.safe_load(original_text) or {}
+    backup = raw.get("backup") or {}
+    raw["backup"] = backup
+    remotes = backup.get("remotes") or []
+    backup["remotes"] = remotes
+
+    console.print(f"Editing remotes in [bold]{chosen}[/bold]")
+    dirty = False
+    while True:
+        console.print(_remotes_table(remotes))
+        action = _ask("Action: [a]dd / [e]dit / [r]emove / [t]oggle enabled / [s]ave & exit / [q]uit", default="s").strip().lower()
+
+        if action == "a":
+            remote = _prompt_remote_details({r["name"] for r in remotes})
+            if remote:
+                remotes.append(remote)
+                dirty = True
+        elif action == "e":
+            idx = _pick_remote(remotes)
+            if idx is not None:
+                others = {r["name"] for i, r in enumerate(remotes) if i != idx}
+                updated = _prompt_remote_details(others, current=remotes[idx])
+                if updated:
+                    remotes[idx] = updated
+                    dirty = True
+        elif action == "r":
+            idx = _pick_remote(remotes)
+            if idx is not None and _ask_bool(f"Remove remote '{remotes[idx]['name']}'? (already-synced backups stay on the remote)", default=False):
+                remotes.pop(idx)
+                dirty = True
+        elif action == "t":
+            idx = _pick_remote(remotes)
+            if idx is not None:
+                remotes[idx]["enabled"] = not remotes[idx].get("enabled", True)
+                dirty = True
+        elif action == "s":
+            if not dirty:
+                console.print("No changes to save.")
+                return True
+            header = "# runtipi-companion configuration (edited by 'backup remotes')\n\n"
+            chosen.write_text(header + yaml.safe_dump(raw, sort_keys=False, default_flow_style=False))
+            try:
+                load_config(str(chosen))
+            except ConfigError as e:
+                # Never leave a config behind that the CLI can't read.
+                chosen.write_text(original_text)
+                console.print(f"[red]Change failed validation, config restored: {e}[/red]")
+                continue
+            console.print(f"[green]Saved {chosen}[/green]")
+            return True
+        elif action == "q":
+            if dirty and not _ask_bool("Discard unsaved changes?", default=False):
+                continue
+            return True
+        else:
+            console.print("[red]Unknown action.[/red]")
 
 
 def run_config_wizard(path: Optional[str] = None) -> Optional[Path]:
