@@ -18,6 +18,8 @@ update) is a thin wrapper around it. What this tool adds:
   backup format.
 - **Updates** for individual apps, all apps (with an exclude list), app
   stores, and Runtipi core itself.
+- **A config wizard** that runs on first start (or via `config wizard`):
+  interviews you in the terminal and writes a validated config file.
 - **A setup wizard** for a fresh box: clone/verify the Runtipi install,
   locate `runtipi-cli` (it isn't on `$PATH` by default), run
   `prepare`/`start`, create backup directories, sanity-check rclone remotes.
@@ -63,10 +65,24 @@ runtipi-companion looks for it at `<runtipi.path>/runtipi-cli` automatically
 
 ## Quickstart
 
+On a first run (no config file anywhere), any command offers to launch the
+interactive **config wizard**, which interviews you and writes a validated
+config file. You can also start it explicitly:
+
+```
+runtipi-companion config wizard
+```
+
+Or go the manual route:
+
 ```
 runtipi-companion config init --path ~/.config/runtipi-companion/config.yaml
 $EDITOR ~/.config/runtipi-companion/config.yaml   # set runtipi.path, add rclone remotes
+```
 
+Then bootstrap the system and take a first backup:
+
+```
 runtipi-companion setup wizard --apply
 
 runtipi-companion backup run --type daily --apply
@@ -109,7 +125,7 @@ itself independently of local disk and every other remote.
 ## Commands
 
 ```
-runtipi-companion config   init|show|validate
+runtipi-companion config   wizard|init|show|validate
 runtipi-companion backup   run|list
 runtipi-companion restore  run|list
 runtipi-companion update   apps|core|appstores
