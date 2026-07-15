@@ -11,7 +11,11 @@ jobs:
     name: Test before release
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 -- version is derived from git tags (hatch-vcs), which
+      # a shallow checkout wouldn't have.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -31,6 +35,8 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
