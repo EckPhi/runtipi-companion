@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+import tarfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from rich.console import Console
+
+from .config import CompanionConfig, RemoteConfig
+from .rclone import RcloneClient
+from .retention import select_prunable
+from .runtipi_cli import RuntipiCLI
+
+console = Console()
+
+
+@dataclass
+class AppRef:
+    store: str
+    app_id: str
+
+    @property
+    def ref(self) -> str:
+        return f"{self.app_id}:{self.store}"
+
+
+def discover_apps(runtipi_path: str, allowlist: Optional[list] = None) -> list:
+    """Walk <runtipi_path>/apps/<store>/<app-id> to find installed apps.
+
+    Mirrors the "for appStore in apps; for app in appStore" loop from the
+    original bash auto-backup script, but returns structured refs instead
+    of shelling out to `ls` twice.
+    """
+    apps_dir = Path(runtipi_path) / "apps"
+    if not apps_dir.is_dir():
+        raise RuntimeError(f"Apps directory not found: {apps_dir}")
+    refs = []
+    for store_dir in sorted(apps_dir.iterdir()):
+        if not store_dir.is_dir():
+            continue
+        for app_dir in sorted(store_dir.iterdir()):
+            if not app_dir.is_dir():
+                continue
+            if allowlist and app_dir.name not in allowlist:
+                continue
+            refs.append(AppRef(store=store_dir.name, app_id=app_dir.name))
+    return refs
+
+
+def _archive_app(runtipi_path: str, store: str, app_id: str, dest_file: Path) -> None:
+    """Create a tar.gz containing the app's apps/, app-data/, and
+    user-config/ directories (if present), same layout as the original
+    bash script (app / app-data / user-config top-level members) so
+    restore can reverse it symmetrically.
+    """
+    app_paths = {
+        Path(runtipi_path) / "apps" / store / app_id: "app",
+        Path(runtipi_path) / "app-data" / store / app_id: "app-data",
+        Path(runtipi_path) / "user-config" / store / app_id: "user-config",
+    }
+    dest_file.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(dest_file, "w:gz", dereference=True) as tar:
+        for src, arcname in app_paths.items():
+            if src.is_dir():
+                tar.add(src, arcname=arcname)
+            elif arcname == "user-config":
+                pass  # user-config is optional, most apps don't have one
+            else:
+                console.print(f"[dim]  {arcname} directory missing for {app_id}, skipped[/dim]")
+
+
+def run_backup(
+    cfg: CompanionConfig,
+    schedule: str,
+    *,
+    apps: Optional[list] = None,
+    stop_apps: Optional[bool] = None,
+    remotes: Optional[list] = None,
+    local_only: bool = False,
+    dry_run: bool = False,
+) -> list:
+    """Back up every matched app for `schedule`, prune local retention, then
+    sync + prune each enabled remote that has a retention configured for
+    this schedule. Returns the list of archive paths created.
+    """
+    if schedule not in cfg.backup.schedules:
+        raise ValueError(
+            f"No retention configured for schedule '{schedule}'. "
+            f"Configured schedules: {list(cfg.backup.schedules)}"
+        )
+    retention = cfg.backup.schedules[schedule].retention
+    stop = cfg.backup.stop_apps if stop_apps is None else stop_apps
+
+    cli = RuntipiCLI(cfg.runtipi.path, cfg.runtipi.cli_path, dry_run=dry_run)
+    allowlist = apps if apps else cfg.runtipi.apps
+    app_refs = discover_apps(cfg.runtipi.path, allowlist)
+    if not app_refs:
+        console.print("[yellow]No apps matched, nothing to back up.[/yellow]")
+        return []
+
+    local_backup_root = Path(cfg.backup_local_path)
+    created_files = []
+    date_str = time.strftime("%Y-%m-%d")
+
+    for ref in app_refs:
+        app_backup_dir = local_backup_root / ref.store / ref.app_id
+        app_backup_dir.mkdir(parents=True, exist_ok=True)
+        dest_file = app_backup_dir / f"{ref.app_id}-{schedule}-{date_str}.tar.gz"
+
+        was_running = cli.is_app_running(ref.app_id, ref.store) if not dry_run else True
+        if stop:
+            if was_running:
+                console.print(f"Stopping {ref.ref}")
+                cli.app_stop(ref.ref)
+                if not dry_run:
+                    time.sleep(cfg.backup.sleep_duration)
+            else:
+                console.print(f"{ref.ref} already stopped")
+
+        console.print(f"Archiving {ref.ref} -> {dest_file}")
+        if not dry_run:
+            _archive_app(cfg.runtipi.path, ref.store, ref.app_id, dest_file)
+            created_files.append(dest_file)
+        else:
+            console.print(f"[yellow]DRY-RUN[/yellow] would create {dest_file}")
+
+        # Local retention: keep the `retention` most recent archives for
+        # this app+schedule, delete the rest.
+        existing = [p.name for p in app_backup_dir.glob(f"{ref.app_id}-{schedule}-*.tar.gz")]
+        prunable = select_prunable(existing, ref.app_id, schedule, retention)
+        for name in prunable:
+            target = app_backup_dir / name
+            console.print(f"Pruning old local backup {target}")
+            if not dry_run:
+                target.unlink(missing_ok=True)
+
+        if stop and was_running:
+            console.print(f"Starting {ref.ref}")
+            cli.app_start(ref.ref)
+            if not dry_run:
+                time.sleep(cfg.backup.sleep_duration)
+
+    if not local_only:
+        sync_to_remotes(cfg, schedule, remotes=remotes, dry_run=dry_run)
+
+    return created_files
+
+
+def sync_to_remotes(
+    cfg: CompanionConfig,
+    schedule: str,
+    *,
+    remotes: Optional[list] = None,
+    dry_run: bool = False,
+) -> None:
+    rclone = RcloneClient(dry_run=dry_run)
+    local_backup_root = Path(cfg.backup_local_path)
+
+    for remote in cfg.backup.remotes:
+        if not remote.enabled:
+            continue
+        if remotes and remote.name not in remotes:
+            continue
+        remote_retention = remote.retention_for(schedule)
+        if remote_retention is None:
+            continue  # this remote isn't configured to keep this schedule
+
+        console.print(f"[bold]Syncing schedule '{schedule}' to remote '{remote.name}'[/bold]")
+        rclone.sync_dir(
+            local_backup_root,
+            remote.rclone_remote,
+            bandwidth_limit=remote.bandwidth_limit,
+            extra_flags=remote.extra_rclone_flags,
+        )
+        if not dry_run:
+            prune_remote(rclone, remote, schedule, remote_retention)
+        else:
+            console.print(f"[yellow]DRY-RUN[/yellow] would prune remote '{remote.name}' to {remote_retention} {schedule} backups per app")
+
+
+def prune_remote(rclone: RcloneClient, remote: RemoteConfig, schedule: str, retention: int) -> None:
+    files_by_dir = {}
+    for path in rclone.list_files(remote.rclone_remote):
+        directory = str(Path(path).parent)
+        files_by_dir.setdefault(directory, []).append(Path(path).name)
+
+    for directory, names in files_by_dir.items():
+        apps_in_dir = {n.split(f"-{schedule}-")[0] for n in names if f"-{schedule}-" in n}
+        for app in apps_in_dir:
+            prunable = select_prunable(names, app, schedule, retention)
+            for name in prunable:
+                remote_path = (
+                    f"{remote.rclone_remote}/{name}"
+                    if directory in (".", "")
+                    else f"{remote.rclone_remote}/{directory}/{name}"
+                )
+                console.print(f"Pruning old remote backup {remote_path}")
+                rclone.delete_file(remote_path)

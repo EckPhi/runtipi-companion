@@ -1,2 +1,184 @@
 # runtipi-companion
 
+A single Python CLI that extends and replaces the shell scripts scattered
+across Runtipi's docs (auto-backup, VPS security, server hardening) with one
+tool: `runtipi-companion`.
+
+Built on top of, not instead of, `runtipi-cli` -- every action that
+Runtipi's own CLI already does well (start/stop, app update, appstore
+update) is a thin wrapper around it. What this tool adds:
+
+- **Backups to multiple rclone remotes, each with its own retention.** The
+  official [auto-backup-apps](https://runtipi.io/docs/guides/auto-backup-apps)
+  script only writes to local disk with one shared retention policy. This
+  keeps that local behavior but adds any number of rclone remotes (B2, S3,
+  Google Drive, SFTP, ...), each syncing independently with its own
+  daily/weekly/monthly/yearly retention.
+- **Restore** from local disk or any configured remote, symmetric with the
+  backup format.
+- **Updates** for individual apps, all apps (with an exclude list), app
+  stores, and Runtipi core itself.
+- **A setup wizard** for a fresh box: clone/verify the Runtipi install,
+  locate `runtipi-cli` (it isn't on `$PATH` by default), run
+  `prepare`/`start`, create backup directories, sanity-check rclone remotes.
+- **Security hardening** that applies the checklists from
+  [VPS security](https://runtipi.io/docs/security/vps-security) and
+  [Server hardening](https://runtipi.io/docs/security/server-hardening):
+  SSH key-only + no root login, UFW, fail2ban.
+- **Tailscale install + `up`**, matching the VPN-only access pattern the VPS
+  security guide recommends (don't open 80/443 publicly).
+- One global YAML config for all of the above.
+
+## Safety model
+
+Every command that changes system state (backups stop/start containers,
+security hardening edits `sshd_config`/firewall/installs packages, restore
+overwrites app data) **defaults to `--dry-run`**, which only prints what it
+would do. Add `--apply` to actually execute. SSH hardening additionally
+refuses to disable password authentication unless it finds an existing
+`authorized_keys` for root/the current user/`$SUDO_USER` (override with
+`--force` if you know what you're doing), and validates `sshd_config` with
+`sshd -t` before restarting -- rolling back automatically if the config is
+broken, so you can't lock yourself out of a remote box.
+
+## Install
+
+```
+python3 -m venv /opt/runtipi-companion-venv
+/opt/runtipi-companion-venv/bin/pip install /path/to/runtipi-companion
+sudo ln -s /opt/runtipi-companion-venv/bin/runtipi-companion /usr/local/bin/runtipi-companion
+```
+
+Or, for local development:
+
+```
+pip install -e ".[dev]"
+pytest
+```
+
+Requires `rclone` on `$PATH` for remote backups, and `tailscale`'s installer
+handles its own binary. `runtipi-cli` does not need to be on `$PATH` --
+runtipi-companion looks for it at `<runtipi.path>/runtipi-cli` automatically
+(set `runtipi.cli_path` in the config if yours lives elsewhere).
+
+## Quickstart
+
+```
+runtipi-companion config init --path ~/.config/runtipi-companion/config.yaml
+$EDITOR ~/.config/runtipi-companion/config.yaml   # set runtipi.path, add rclone remotes
+
+runtipi-companion setup wizard --apply
+
+runtipi-companion backup run --type daily --apply
+runtipi-companion backup list jellyfin
+
+runtipi-companion security harden --all           # review the plan (dry-run)
+runtipi-companion security harden --all --apply    # actually apply it
+
+runtipi-companion tailscale install --apply
+```
+
+## Configuration
+
+See [`runtipi-companion.example.yaml`](./runtipi-companion.example.yaml) for
+every field with comments. Config is searched at `/etc/runtipi-companion/config.yaml`
+then `~/.config/runtipi-companion/config.yaml`, or pass `--config /path`.
+
+The part that matters most for the "individual retention per remote" ask:
+
+```yaml
+backup:
+  schedules:                      # local disk retention
+    daily: { retention: 7 }
+    weekly: { retention: 4 }
+  remotes:
+    - name: backblaze
+      rclone_remote: "b2-runtipi:my-bucket/runtipi-backups"
+      schedules:                  # THIS remote's own retention, independent of local
+        daily: { retention: 14 }
+        monthly: { retention: 12 }
+    - name: gdrive
+      rclone_remote: "gdrive:runtipi-backups"
+      schedules:
+        weekly: { retention: 4 } # only syncs weekly backups, keeps 4
+```
+
+A remote only receives backups for schedules it explicitly lists, and prunes
+itself independently of local disk and every other remote.
+
+## Commands
+
+```
+runtipi-companion config   init|show|validate
+runtipi-companion backup   run|list
+runtipi-companion restore  run|list
+runtipi-companion update   apps|core|appstores
+runtipi-companion setup    wizard
+runtipi-companion security harden|status
+runtipi-companion tailscale install|status
+```
+
+Run `runtipi-companion <group> <command> --help` for full options.
+
+## Automating backups
+
+Either cron (matches the original guide):
+
+```
+sudo crontab -e
+```
+
+```
+0 2 * * 2-7 /usr/local/bin/runtipi-companion backup run --type daily --apply
+0 2 * * 1   /usr/local/bin/runtipi-companion backup run --type weekly --apply
+0 3 1 * *   /usr/local/bin/runtipi-companion backup run --type monthly --apply
+```
+
+Or the systemd timers in [`systemd/`](./systemd/), which add logging via
+`journalctl` and `Persistent=true` (a backup missed because the box was off
+runs as soon as it's back).
+
+## Restore
+
+```
+runtipi-companion restore list jellyfin --remote backblaze
+runtipi-companion restore run jellyfin jellyfin-daily-2026-07-01.tar.gz --from-remote backblaze --apply
+```
+
+Omit `--from-remote` to restore from the local backup directory instead.
+
+## Limitations / things to know
+
+- The backup format is this tool's own (tar.gz of `app`/`app-data`/`user-config`,
+  same layout as the original bash script), not `runtipi-cli app backup`'s
+  native format -- they aren't interchangeable. `runtipi-cli app backup`
+  is still exposed via the `RuntipiCLI` wrapper for scripting if you want it.
+- Remote pruning parses `rclone lsf -R` output; very unusual remote path
+  layouts (colons or the schedule name embedded oddly in a path segment)
+  could confuse the app-name grouping. Test with `--dry-run` after your
+  first real sync to a new remote before trusting the retention prune.
+- Security hardening covers the concrete steps from Runtipi's own docs
+  (SSH keys, UFW, fail2ban). It's not a substitute for reading those docs
+  once yourself.
+
+## Ideas for later (not built yet)
+
+Things worth considering if this becomes your daily driver:
+
+- **Backup encryption** (age or gpg) before upload, since remotes are
+  third-party cloud storage.
+- **Pre-update snapshot**: auto-run a backup immediately before `update apps`
+  / `update core` so every update is trivially reversible.
+- **`doctor` command**: one-shot audit against the VPS-security checklist
+  (report pass/fail instead of applying changes).
+- **Backup integrity verification**: `tar -t` / checksum each archive right
+  after creation and fail loudly instead of discovering a corrupt backup at
+  restore time.
+- **`--json` output** on every command for monitoring integration.
+- **Fleet mode**: point one config at multiple Runtipi hosts (e.g. via SSH)
+  for centralized backup/update status across boxes.
+- **Self-update**: `runtipi-companion self-update` to pull new pip releases.
+- Richer notifications (ntfy priority levels, per-event webhook payloads)
+  beyond the current single generic webhook.
+
+Happy to build any of these next -- say the word.

@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly Runtipi Companion backup
+
+[Timer]
+OnCalendar=Mon *-*-* 02:30:00
+Persistent=true
+Unit=runtipi-companion-backup@weekly.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+# Templated service, instantiated per schedule name (daily/weekly/monthly/yearly).
+# Install: sudo cp runtipi-companion-backup@.service /etc/systemd/system/
+[Unit]
+Description=Runtipi Companion backup (%i)
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# Adjust the --config path if you didn't use a default config location.
+ExecStart=/usr/local/bin/runtipi-companion backup run --type %i --apply
