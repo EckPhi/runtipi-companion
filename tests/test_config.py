@@ -117,3 +117,21 @@ def test_unknown_schedule_name_rejected(tmp_path):
     """)
     with pytest.raises(ConfigError):
         load_config(str(p))
+
+
+def test_backup_before_defaults_true(tmp_path):
+    p = write_config(tmp_path, """
+        runtipi:
+          path: /opt/runtipi
+    """)
+    assert load_config(str(p)).updates.backup_before is True
+
+
+def test_backup_before_can_be_disabled(tmp_path):
+    p = write_config(tmp_path, """
+        runtipi:
+          path: /opt/runtipi
+        updates:
+          backup_before: false
+    """)
+    assert load_config(str(p)).updates.backup_before is False

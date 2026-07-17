@@ -12,6 +12,7 @@ from rich.console import Console
 from . import __version__
 from . import backup as backup_mod
 from . import config_wizard
+from . import doctor as doctor_mod
 from . import restore as restore_mod
 from . import security as security_mod
 from . import setup_wizard
@@ -21,6 +22,7 @@ from . import update as update_mod
 from . import version_check
 from .config import DEFAULT_CONFIG_PATHS, CompanionConfig, ConfigError, load_config
 from .notify import notify
+from .shell import run as shell_run
 from .templates import EXAMPLE_CONFIG
 
 console = Console()
@@ -225,25 +227,32 @@ def restore_list(
 # ---- update ----
 
 
+BackupFirstOption = typer.Option(
+    None, "--backup/--no-backup", help="Snapshot affected apps first (default: updates.backup_before)."
+)
+
+
 @update_app.command("apps")
 def update_apps_cmd(
     apps: Optional[str] = typer.Option(None, "--apps", help="Comma-separated app ids (default: all)."),
+    backup: Optional[bool] = BackupFirstOption,
     config: Optional[str] = ConfigOption,
     dry_run: bool = DryRunOption,
 ):
     cfg = _load(config)
     app_list = apps.split(",") if apps else None
-    update_mod.update_apps(cfg, apps=app_list, dry_run=dry_run)
+    update_mod.update_apps(cfg, apps=app_list, dry_run=dry_run, backup_first=backup)
 
 
 @update_app.command("core")
 def update_core_cmd(
     version: str = typer.Option("latest"),
+    backup: Optional[bool] = BackupFirstOption,
     config: Optional[str] = ConfigOption,
     dry_run: bool = DryRunOption,
 ):
     cfg = _load(config)
-    update_mod.update_core(cfg, version, dry_run=dry_run)
+    update_mod.update_core(cfg, version, dry_run=dry_run, backup_first=backup)
 
 
 @update_app.command("appstores")
@@ -325,6 +334,40 @@ def tailscale_status():
 def setup_wizard_cmd(config: Optional[str] = ConfigOption, yes: bool = YesOption, dry_run: bool = DryRunOption):
     cfg = _load(config)
     setup_wizard.run_wizard(cfg, dry_run=dry_run, assume_yes=yes)
+
+
+@app.command("doctor")
+def doctor_cmd(config: Optional[str] = ConfigOption):
+    """One-shot health audit: runtipi install, docker, backups, rclone
+    remotes, and the VPS-security checklist. Reports pass/warn/fail without
+    changing anything; exits non-zero if any check fails."""
+    cfg = _load(config)
+    failed = doctor_mod.render(doctor_mod.run_doctor(cfg))
+    raise typer.Exit(1 if failed else 0)
+
+
+@app.command("self-update")
+def self_update_cmd(dry_run: bool = DryRunOption):
+    """Update runtipi-companion itself to the latest PyPI release (detects
+    pipx vs pip installs). Defaults to a dry-run preview like everything
+    else; pass --apply to actually upgrade."""
+    if __version__ == "0.0.0+unknown":
+        console.print("Source checkout -- not managed by pip/pipx. Use git pull instead.")
+        raise typer.Exit(1)
+    latest = version_check.check_for_update(force=True)
+    if latest is None:
+        console.print(f"[green]runtipi-companion {__version__} is up to date.[/green]")
+        return
+    # pipx installs run from a venv under a "pipx" directory; plain pip
+    # venvs need pip invoked inside the same interpreter.
+    if "pipx" in sys.prefix:
+        cmd = ["pipx", "upgrade", "runtipi-companion"]
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "runtipi-companion"]
+    console.print(f"Upgrading {__version__} -> {latest}")
+    shell_run(cmd, dry_run=dry_run)
+    if not dry_run:
+        console.print(f"[green]Upgraded to {latest}.[/green]")
 
 
 @app.command("version")

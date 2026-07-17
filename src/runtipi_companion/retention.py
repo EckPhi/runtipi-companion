@@ -9,7 +9,7 @@ import re
 from typing import Optional
 
 BACKUP_NAME_RE = re.compile(
-    r"^(?P<app>.+)-(?P<schedule>daily|weekly|monthly|yearly)-"
+    r"^(?P<app>.+)-(?P<schedule>daily|weekly|monthly|yearly|pre-update)-"
     r"(?P<date>\d{4}-\d{2}-\d{2})(?:-(?P<seq>\d+))?\.tar\.gz$"
 )
 

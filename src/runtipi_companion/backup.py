@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tarfile
 import time
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -14,6 +15,29 @@ from .retention import select_prunable
 from .runtipi_cli import RuntipiCLI
 
 console = Console()
+
+
+class BackupVerificationError(RuntimeError):
+    pass
+
+
+def verify_archive(path: Path) -> None:
+    """Read every member of the archive back in full. gzip CRCs are only
+    checked on read, so a truncated or bit-flipped archive fails here
+    instead of at restore time. Raises BackupVerificationError.
+    """
+    try:
+        with tarfile.open(path, "r:gz") as tar:
+            for member in tar:
+                if not member.isfile():
+                    continue
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    continue
+                while extracted.read(1 << 20):
+                    pass
+    except (tarfile.TarError, OSError, EOFError, zlib.error) as e:
+        raise BackupVerificationError(f"Archive failed verification: {path} ({e})") from e
 
 
 @dataclass
@@ -80,17 +104,24 @@ def run_backup(
     remotes: Optional[list] = None,
     local_only: bool = False,
     dry_run: bool = False,
+    retention_override: Optional[int] = None,
 ) -> list:
     """Back up every matched app for `schedule`, prune local retention, then
     sync + prune each enabled remote that has a retention configured for
     this schedule. Returns the list of archive paths created.
+
+    `retention_override` also allows schedules outside the configured ones
+    (used for the ad-hoc "pre-update" snapshots).
     """
-    if schedule not in cfg.backup.schedules:
+    if retention_override is not None:
+        retention = retention_override
+    elif schedule in cfg.backup.schedules:
+        retention = cfg.backup.schedules[schedule].retention
+    else:
         raise ValueError(
             f"No retention configured for schedule '{schedule}'. "
             f"Configured schedules: {list(cfg.backup.schedules)}"
         )
-    retention = cfg.backup.schedules[schedule].retention
     stop = cfg.backup.stop_apps if stop_apps is None else stop_apps
 
     cli = RuntipiCLI(cfg.runtipi.path, cfg.runtipi.cli_path, dry_run=dry_run)
@@ -120,27 +151,41 @@ def run_backup(
                 console.print(f"{ref.ref} already stopped")
 
         console.print(f"Archiving {ref.ref} -> {dest_file}")
+        verify_error = None
         if not dry_run:
             _archive_app(cfg.runtipi.path, ref.store, ref.app_id, dest_file)
-            created_files.append(dest_file)
+            try:
+                verify_archive(dest_file)
+                created_files.append(dest_file)
+            except BackupVerificationError as e:
+                # A corrupt archive must not survive (a later prune could
+                # delete an older good backup in its favor) and must not
+                # fail silently -- but restart the app first.
+                dest_file.unlink(missing_ok=True)
+                verify_error = e
         else:
-            console.print(f"[yellow]DRY-RUN[/yellow] would create {dest_file}")
+            console.print(f"[yellow]DRY-RUN[/yellow] would create and verify {dest_file}")
 
-        # Local retention: keep the `retention` most recent archives for
-        # this app+schedule, delete the rest.
-        existing = [p.name for p in app_backup_dir.glob(f"{ref.app_id}-{schedule}-*.tar.gz")]
-        prunable = select_prunable(existing, ref.app_id, schedule, retention)
-        for name in prunable:
-            target = app_backup_dir / name
-            console.print(f"Pruning old local backup {target}")
-            if not dry_run:
-                target.unlink(missing_ok=True)
+        if verify_error is None:
+            # Local retention: keep the `retention` most recent archives for
+            # this app+schedule, delete the rest.
+            existing = [p.name for p in app_backup_dir.glob(f"{ref.app_id}-{schedule}-*.tar.gz")]
+            prunable = select_prunable(existing, ref.app_id, schedule, retention)
+            for name in prunable:
+                target = app_backup_dir / name
+                console.print(f"Pruning old local backup {target}")
+                if not dry_run:
+                    target.unlink(missing_ok=True)
 
         if stop and was_running:
             console.print(f"Starting {ref.ref}")
             cli.app_start(ref.ref)
             if not dry_run:
                 time.sleep(cfg.backup.sleep_duration)
+
+        if verify_error is not None:
+            console.print(f"[red]{verify_error}[/red] Deleted the corrupt archive.")
+            raise verify_error
 
     if not local_only:
         sync_to_remotes(cfg, schedule, remotes=remotes, dry_run=dry_run)

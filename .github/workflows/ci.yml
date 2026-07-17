@@ -52,6 +52,8 @@ jobs:
           runtipi-companion --help
           runtipi-companion config --help
           runtipi-companion backup --help
+          runtipi-companion doctor --help
+          runtipi-companion self-update --help
 
       - name: Verify config init + validate round-trip
         run: |

@@ -83,6 +83,10 @@ updates:
   auto_update_core: false
   auto_update_apps: false
   exclude_apps: []
+  # Take a local-only snapshot of the affected apps right before
+  # `update apps` / `update core`, so every update is reversible via
+  # `restore run`. Keeps the 2 most recent snapshots per app.
+  backup_before: true
 
 notify:
   webhook_url: null   # e.g. a Discord/Slack/ntfy webhook URL

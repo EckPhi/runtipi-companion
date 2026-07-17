@@ -15,9 +15,13 @@ update) is a thin wrapper around it. What this tool adds:
   Google Drive, SFTP, ...), each syncing independently with its own
   daily/weekly/monthly/yearly retention.
 - **Restore** from local disk or any configured remote, symmetric with the
-  backup format.
+  backup format. Every archive is verified (fully read back) right after
+  creation, so a corrupt backup fails the backup run instead of surfacing
+  at restore time.
 - **Updates** for individual apps, all apps (with an exclude list), app
-  stores, and Runtipi core itself.
+  stores, and Runtipi core itself. By default a local pre-update snapshot
+  of the affected apps is taken first (`updates.backup_before`), so every
+  update is reversible via `restore run`.
 - **A config wizard** that runs on first start (or via `config wizard`):
   interviews you in the terminal and writes a validated config file.
 - **A setup wizard** for a fresh box: clone/verify the Runtipi install,
@@ -162,7 +166,15 @@ runtipi-companion update   apps|core|appstores
 runtipi-companion setup    wizard
 runtipi-companion security harden|status
 runtipi-companion tailscale install|status
+runtipi-companion doctor        # health audit: pass/warn/fail, changes nothing
+runtipi-companion self-update   # upgrade this tool from PyPI (pipx or pip)
+runtipi-companion version
 ```
+
+`doctor` audits the whole setup read-only -- runtipi install, docker,
+backup freshness, rclone remotes, and the VPS-security checklist (sshd
+effective config, UFW, fail2ban, tailscale) -- and exits non-zero if any
+check fails, so you can run it from monitoring.
 
 Run `runtipi-companion <group> <command> --help` for full options.
 
@@ -227,18 +239,16 @@ Things worth considering if this becomes your daily driver:
 
 - **Backup encryption** (age or gpg) before upload, since remotes are
   third-party cloud storage.
-- **Pre-update snapshot**: auto-run a backup immediately before `update apps`
-  / `update core` so every update is trivially reversible.
-- **`doctor` command**: one-shot audit against the VPS-security checklist
-  (report pass/fail instead of applying changes).
-- **Backup integrity verification**: `tar -t` / checksum each archive right
-  after creation and fail loudly instead of discovering a corrupt backup at
-  restore time.
-- **`--json` output** on every command for monitoring integration.
+- **`--json` output** on every command for monitoring integration
+  (`doctor`'s exit code already works for simple alerting).
 - **Fleet mode**: point one config at multiple Runtipi hosts (e.g. via SSH)
-  for centralized backup/update status across boxes.
-- **Self-update**: `runtipi-companion self-update` to pull new pip releases.
+  for centralized backup/update status across boxes. Provisioning many
+  boxes is already covered by the ansible playbook in
+  [`deploy/ansible/`](./deploy/ansible/); this would add day-2 status.
 - Richer notifications (ntfy priority levels, per-event webhook payloads)
   beyond the current single generic webhook.
+
+Already graduated from this list: pre-update snapshots, backup integrity
+verification, `doctor`, and `self-update`.
 
 Happy to build any of these next -- say the word.

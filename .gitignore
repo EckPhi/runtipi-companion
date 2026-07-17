@@ -228,3 +228,5 @@ __marimo__/
 # Built Visual Studio Code Extensions
 *.vsix
 
+uv.lock
+.venv/

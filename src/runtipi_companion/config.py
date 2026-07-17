@@ -120,6 +120,7 @@ class UpdatesConfig:
     auto_update_core: bool = False
     auto_update_apps: bool = False
     exclude_apps: list = field(default_factory=list)
+    backup_before: bool = True  # local pre-update snapshot before update apps/core
 
 
 @dataclass
@@ -256,6 +257,7 @@ def load_config(path: Optional[str] = None) -> CompanionConfig:
             auto_update_core=u.get("auto_update_core", False),
             auto_update_apps=u.get("auto_update_apps", False),
             exclude_apps=u.get("exclude_apps", []),
+            backup_before=u.get("backup_before", True),
         )
 
     if "notify" in raw:
