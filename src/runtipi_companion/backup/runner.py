@@ -130,14 +130,12 @@ def run_backup(
         console.print("[yellow]No apps matched, nothing to back up.[/yellow]")
         return []
 
-    # Per-host subfolder so several machines can share one backup location
-    # (local NAS mount or remote bucket) without mixing archives.
-    host_backup_root = Path(cfg.backup_local_path) / cfg.host_label
+    local_backup_root = Path(cfg.backup_local_path)
     created_files = []
     date_str = time.strftime("%Y-%m-%d")
 
     for ref in app_refs:
-        app_backup_dir = host_backup_root / ref.store / ref.app_id
+        app_backup_dir = local_backup_root / ref.store / ref.app_id
         app_backup_dir.mkdir(parents=True, exist_ok=True)
         dest_file = app_backup_dir / f"{ref.app_id}-{schedule}-{date_str}.tar.gz"
 
@@ -202,9 +200,11 @@ def sync_to_remotes(
     dry_run: bool = False,
 ) -> None:
     rclone = RcloneClient(dry_run=dry_run)
-    # Sync and prune only this host's subtree: other hosts backing up to the
-    # same remote must never be touched by this machine's retention policy.
-    host_backup_root = Path(cfg.backup_local_path) / cfg.host_label
+    # Remotes may be shared between machines, so each host syncs its local
+    # backups into its own <remote>/<host_label>/ subtree and prunes only
+    # there -- other hosts' backups are never touched by this machine's
+    # retention policy. Local disk needs no such subfolder.
+    local_backup_root = Path(cfg.backup_local_path)
 
     for remote in cfg.backup.remotes:
         if not remote.enabled:
@@ -218,7 +218,7 @@ def sync_to_remotes(
         remote_host_root = f"{remote.rclone_remote}/{cfg.host_label}"
         console.print(f"[bold]Syncing schedule '{schedule}' to remote '{remote.name}'[/bold]")
         rclone.sync_dir(
-            host_backup_root,
+            local_backup_root,
             remote_host_root,
             bandwidth_limit=remote.bandwidth_limit,
             extra_flags=remote.extra_rclone_flags,

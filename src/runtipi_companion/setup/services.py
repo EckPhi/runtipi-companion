@@ -19,7 +19,8 @@ console = Console()
 UNIT_DIR = Path("/etc/systemd/system")
 SERVICE_UNIT = "runtipi-companion-backup@.service"
 VALID_SCHEDULES = ("daily", "weekly", "monthly", "yearly")
-DEFAULT_SCHEDULES = ("daily", "weekly", "monthly")
+# Every schedule the default config has retention for gets a timer.
+DEFAULT_SCHEDULES = VALID_SCHEDULES
 
 
 def _unit_text(name: str) -> str:

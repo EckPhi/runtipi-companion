@@ -18,10 +18,8 @@ from .retention import select_latest
 console = Console()
 
 
-def list_local_backups(
-    cfg: CompanionConfig, app_id: str, store: Optional[str] = None, host: Optional[str] = None
-) -> list:
-    root = Path(cfg.backup_local_path) / (host or cfg.host_label)
+def list_local_backups(cfg: CompanionConfig, app_id: str, store: Optional[str] = None) -> list:
+    root = Path(cfg.backup_local_path)
     if store:
         return sorted((root / store / app_id).glob(f"{app_id}-*.tar.gz"))
     return sorted(root.glob(f"*/{app_id}/{app_id}-*.tar.gz"))
@@ -49,13 +47,6 @@ def list_remote_hosts(cfg: CompanionConfig, remote_name: str) -> list:
     if not remote:
         raise ValueError(f"Unknown remote '{remote_name}'")
     return RcloneClient().list_dirs(remote.rclone_remote)
-
-
-def list_local_hosts(cfg: CompanionConfig) -> list:
-    root = Path(cfg.backup_local_path)
-    if not root.is_dir():
-        return []
-    return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
 def latest_per_app(files: list) -> list:
@@ -94,9 +85,10 @@ def restore_backup(
     user-config members from the tar.gz and drops them back into their
     real locations under the runtipi install, replacing whatever is there.
 
-    `host` selects which machine's backup subtree to restore from (default:
-    this machine's own host label) -- restoring another box's backups onto
-    this one is a supported migration path. For remote restores a
+    Host labels only exist on remotes (local disk is inherently one
+    machine's): for remote restores, `host` selects which machine's subtree
+    to download from (default: this machine's own label). Restoring another
+    box's remote backups onto this one is the supported migration path. A
     host-prefixed remote-relative path in `backup_file` wins over `host`.
     """
     cli = RuntipiCLI(cfg.runtipi.path, cfg.runtipi.cli_path, dry_run=dry_run)
@@ -119,7 +111,7 @@ def restore_backup(
         )
         archive_path = local_target
     else:
-        archive_path = Path(cfg.backup_local_path) / (host or cfg.host_label) / store / app_id / backup_file
+        archive_path = Path(cfg.backup_local_path) / store / app_id / backup_file
         if not archive_path.exists() and not dry_run:
             raise FileNotFoundError(
                 f"Backup not found: {archive_path}\n"

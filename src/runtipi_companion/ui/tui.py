@@ -27,7 +27,7 @@ class RestoreSelection:
     app_id: str
     backup_file: str  # filename for local, remote-relative path for remotes
     from_remote: Optional[str] = None
-    host: Optional[str] = None  # which machine's backup subtree it came from
+    host: Optional[str] = None  # remote restores only: which machine's subtree it came from
 
 
 def multi_select(prompt: str, options: list) -> list:
@@ -117,21 +117,16 @@ def interactive_restore(cfg: CompanionConfig) -> Optional[RestoreSelection]:
 
     if source_idx == 0:
         root = Path(cfg.backup_local_path)
-        hosts = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
-        if not hosts:
-            console.print(f"[yellow]No local backups under {root}.[/yellow]")
-            return None
-        host = hosts[_pick_host(hosts, cfg.host_label)]
-        found = sorted((root / host).glob("*/*/*.tar.gz"))
+        found = sorted(root.glob("*/*/*.tar.gz"))
         if not found:
-            console.print(f"[yellow]No local backups under {root / host}.[/yellow]")
+            console.print(f"[yellow]No local backups under {root}.[/yellow]")
             return None
         archives = {}
         for p in found:
-            # <root>/<host>/<store>/<app>/<app>-<schedule>-<date>.tar.gz
+            # <root>/<store>/<app>/<app>-<schedule>-<date>.tar.gz
             archives.setdefault((p.parent.parent.name, p.parent.name), []).append(p.name)
         (store, app_id), filename = _pick_app_and_file(archives)
-        return RestoreSelection(store=store, app_id=app_id, backup_file=filename, host=host)
+        return RestoreSelection(store=store, app_id=app_id, backup_file=filename)
 
     remote = cfg.backup.remotes[source_idx - 1]
     rclone = RcloneClient()

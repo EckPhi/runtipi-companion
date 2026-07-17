@@ -136,14 +136,14 @@ def test_manage_remotes_quit_discards(tmp_path, monkeypatch):
 # ---- interactive restore ----
 
 
-def make_local_backups(tmp_path: Path, host: str = "boxa") -> Path:
+def make_local_backups(tmp_path: Path) -> Path:
     root = tmp_path / "backups"
     for store, app, name in [
         ("migrated", "hello", "hello-daily-2026-07-01.tar.gz"),
         ("migrated", "hello", "hello-daily-2026-07-02.tar.gz"),
         ("migrated", "world", "world-weekly-2026-07-01.tar.gz"),
     ]:
-        d = root / host / store / app
+        d = root / store / app
         d.mkdir(parents=True, exist_ok=True)
         (d / name).touch()
     return root
@@ -175,7 +175,7 @@ def test_interactive_restore_local(tmp_path, monkeypatch):
     assert sel.app_id == "hello"
     assert sel.backup_file == "hello-daily-2026-07-01.tar.gz"
     assert sel.from_remote is None
-    assert sel.host == "boxa"
+    assert sel.host is None
 
 
 def test_interactive_restore_local_empty(tmp_path):

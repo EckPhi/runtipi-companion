@@ -83,9 +83,9 @@ say "Setup wizard (dry-run)"
 "${RC[@]}" setup wizard --config "$CFG" --yes
 
 say "Seed two old archives to prove retention pruning"
-mkdir -p "$BACKUP_DIR/e2ehost/migrated/e2etest"
-tar -czf "$BACKUP_DIR/e2ehost/migrated/e2etest/e2etest-daily-2020-01-01.tar.gz" -T /dev/null
-tar -czf "$BACKUP_DIR/e2ehost/migrated/e2etest/e2etest-daily-2020-01-02.tar.gz" -T /dev/null
+mkdir -p "$BACKUP_DIR/migrated/e2etest"
+tar -czf "$BACKUP_DIR/migrated/e2etest/e2etest-daily-2020-01-01.tar.gz" -T /dev/null
+tar -czf "$BACKUP_DIR/migrated/e2etest/e2etest-daily-2020-01-02.tar.gz" -T /dev/null
 
 say "Backup: dry-run preview, then apply"
 "${RC[@]}" backup run --type daily --config "$CFG"
@@ -93,8 +93,8 @@ say "Backup: dry-run preview, then apply"
 
 TODAY=$(date +%F)
 ARCHIVE="e2etest-daily-$TODAY.tar.gz"
-test -f "$BACKUP_DIR/e2ehost/migrated/e2etest/$ARCHIVE" || fail "local archive was not created"
-test ! -f "$BACKUP_DIR/e2ehost/migrated/e2etest/e2etest-daily-2020-01-01.tar.gz" \
+test -f "$BACKUP_DIR/migrated/e2etest/$ARCHIVE" || fail "local archive was not created"
+test ! -f "$BACKUP_DIR/migrated/e2etest/e2etest-daily-2020-01-01.tar.gz" \
   || fail "local retention (2) did not prune the oldest archive"
 [ "$(find "$BACKUP_DIR" -name '*.tar.gz' | wc -l)" -eq 2 ] || fail "expected exactly 2 local archives"
 

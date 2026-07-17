@@ -41,7 +41,7 @@ ansible-playbook -i inventory.yml install.yml \
 | `companion_tailscale_install` | `false` | Run `setup tailscale --yes --apply`. |
 | `companion_tailscale_security` | `false` | **Danger, read below.** Run `security harden --tailscale-security`. |
 | `companion_install_timers` | `true` | Run `setup services` to install + enable the bundled systemd backup timers. |
-| `companion_timers` | daily, weekly, monthly | Which timers to enable. |
+| `companion_timers` | daily, weekly, monthly, yearly | Which timers to enable. |
 
 ## Tailscale lockdown ordering (read before enabling)
 

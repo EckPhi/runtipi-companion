@@ -169,7 +169,16 @@ def backup_run(
         raise
 
 
-HostOption = typer.Option(None, "--host", help="Which machine's backup subfolder (default: this machine's host label).")
+HostOption = typer.Option(
+    None, "--host", help="With --remote/--from-remote: which machine's subtree (default: this machine's host label)."
+)
+
+
+def _require_remote_for_host(host: Optional[str], remote: Optional[str]) -> None:
+    # Host subfolders only exist on remotes; local disk is one machine's.
+    if host and not remote:
+        console.print("[red]--host only applies to remote listings/restores (add --remote/--from-remote).[/red]")
+        raise typer.Exit(1)
 
 
 @backup_app.command("list")
@@ -181,13 +190,14 @@ def backup_list(
 ):
     """List backups. Without APP: one line per app with its newest archive
     (also handy to look up app ids). With APP: every archive for that app."""
+    _require_remote_for_host(host, remote)
     cfg = _load(config)
 
     if app is None:
         if remote:
             files = restore_mod._remote_files(cfg, remote, host or cfg.host_label)
         else:
-            root = Path(cfg.backup_local_path) / (host or cfg.host_label)
+            root = Path(cfg.backup_local_path)
             files = [str(p.relative_to(root)) for p in root.glob("*/*/*.tar.gz")]
         latest = restore_mod.latest_per_app(files)
         if not latest:
@@ -201,7 +211,7 @@ def backup_list(
     if remote:
         files = restore_mod.list_remote_backups(cfg, remote, app, host=host)
     else:
-        files = [str(p) for p in restore_mod.list_local_backups(cfg, app, host=host)]
+        files = [str(p) for p in restore_mod.list_local_backups(cfg, app)]
     if not files:
         console.print("No backups found.")
         _print_known_hosts(cfg, remote)
@@ -210,9 +220,11 @@ def backup_list(
 
 
 def _print_known_hosts(cfg: CompanionConfig, remote: Optional[str]) -> None:
-    """After an empty listing, show which host subfolders DO exist -- the
-    archive you're looking for may live under another machine's label."""
-    hosts = restore_mod.list_remote_hosts(cfg, remote) if remote else restore_mod.list_local_hosts(cfg)
+    """After an empty remote listing, show which host subfolders DO exist --
+    the archive you're looking for may live under another machine's label."""
+    if not remote:
+        return
+    hosts = restore_mod.list_remote_hosts(cfg, remote)
     others = [h for h in hosts if h != cfg.host_label]
     if others:
         console.print(f"Other hosts with backups here: {', '.join(others)} (use --host)")
@@ -240,8 +252,10 @@ def restore_run(
     yes: bool = YesOption,
     dry_run: bool = DryRunOption,
 ):
-    """Restore an app. --host restores another machine's backup onto this
-    one (migration path); the interactive picker offers every host it finds."""
+    """Restore an app. --from-remote with --host restores another machine's
+    remote backup onto this one (migration path); the interactive picker
+    offers every host it finds on the chosen remote."""
+    _require_remote_for_host(host, from_remote)
     cfg = _load(config)
     if app_id is None or backup_file is None:
         if not sys.stdin.isatty():

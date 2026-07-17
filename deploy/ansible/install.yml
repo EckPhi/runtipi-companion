@@ -35,6 +35,7 @@
       - daily
       - weekly
       - monthly
+      - yearly
 
   tasks:
     - name: Install system packages (pipx, rclone, git)

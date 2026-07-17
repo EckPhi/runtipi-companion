@@ -47,10 +47,11 @@ class RuntipiConfig:
 class BackupConfig:
     work_dir: str = "/tmp/runtipi-companion"
     local_path: Optional[str] = None  # defaults to <runtipi.path>/backups
-    # Subfolder under local_path (and on every remote) that this machine's
-    # backups live in: <local_path>/<host_label>/<store>/<app>/. Defaults to
-    # the machine's hostname, so several boxes can share one remote bucket
-    # without clobbering or pruning each other.
+    # Subfolder on every REMOTE that this machine's backups sync into:
+    # <remote>/<host_label>/<store>/<app>/. Local disk stays flat
+    # (<local_path>/<store>/<app>/). Defaults to the machine's hostname, so
+    # several boxes can share one bucket without clobbering or pruning each
+    # other.
     host_label: Optional[str] = None
     stop_apps: bool = True
     sleep_duration: int = 10

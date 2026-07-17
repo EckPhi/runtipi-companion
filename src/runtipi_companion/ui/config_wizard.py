@@ -140,7 +140,7 @@ def gather_answers() -> dict:
     local_path = _or_none(_ask(f"Local backup directory (empty = {runtipi_path}/backups)", default=""))
     host_label = _or_none(
         _ask(
-            "Backups are stored per machine under <backup dir>/<label>/. "
+            "On remotes, this machine's backups sync into their own subfolder. "
             f"Label for this machine (empty = hostname '{socket.gethostname()}')",
             default="",
         )
