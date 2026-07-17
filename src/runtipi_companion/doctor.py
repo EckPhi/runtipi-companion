@@ -252,8 +252,23 @@ def _check_version() -> list:
     return [CheckResult("runtipi-companion up to date", OK, __version__)]
 
 
+def _check_config_version(cfg: CompanionConfig) -> list:
+    from .config import CONFIG_VERSION
+
+    if cfg.version < CONFIG_VERSION:
+        return [
+            CheckResult(
+                "config schema version",
+                WARN,
+                f"v{cfg.version} (current: v{CONFIG_VERSION}) -- run 'config migrate --apply'",
+            )
+        ]
+    return [CheckResult("config schema version", OK, f"v{cfg.version}")]
+
+
 def run_doctor(cfg: CompanionConfig) -> list:
     results = []
+    results.extend(_check_config_version(cfg))
     results.extend(_check_runtipi(cfg))
     results.extend(_check_backups(cfg))
     results.extend(_check_remotes(cfg))

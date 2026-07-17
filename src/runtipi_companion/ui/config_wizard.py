@@ -20,7 +20,7 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.syntax import Syntax
 from rich.table import Table
 
-from ..config import DEFAULT_CONFIG_PATHS, VALID_SCHEDULES, ConfigError, load_config
+from ..config import CONFIG_VERSION, DEFAULT_CONFIG_PATHS, VALID_SCHEDULES, ConfigError, load_config
 
 console = Console()
 
@@ -212,6 +212,7 @@ def gather_answers() -> dict:
     }
 
     return {
+        "version": CONFIG_VERSION,
         "runtipi": {"path": runtipi_path, "cli_path": cli_path, "apps": apps},
         "backup": {
             "work_dir": work_dir,

@@ -8,6 +8,7 @@ from typing import Optional
 import yaml
 
 from .schema import (
+    CONFIG_VERSION,
     DEFAULT_CONFIG_PATHS,
     VALID_SCHEDULES,
     BackupConfig,
@@ -75,6 +76,14 @@ def load_config(path: Optional[str] = None) -> CompanionConfig:
         raw = yaml.safe_load(f) or {}
 
     cfg = CompanionConfig()
+    # Missing key = version 1 (pre-versioning file). Newer-than-us fails
+    # hard: silently misreading a future schema is worse than an error.
+    cfg.version = int(raw.get("version", 1))
+    if cfg.version > CONFIG_VERSION:
+        raise ConfigError(
+            f"Config file {chosen} is version {cfg.version}, but this runtipi-companion "
+            f"only supports up to version {CONFIG_VERSION}. Upgrade with 'runtipi-companion self-update'."
+        )
 
     if "runtipi" in raw:
         r = raw["runtipi"] or {}

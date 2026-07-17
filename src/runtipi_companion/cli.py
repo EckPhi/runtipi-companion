@@ -15,7 +15,7 @@ from . import doctor as doctor_mod
 from . import security as security_mod
 from . import update as update_mod
 from .backup import restore as restore_mod
-from .config import DEFAULT_CONFIG_PATHS, CompanionConfig, ConfigError, load_config
+from .config import CONFIG_VERSION, DEFAULT_CONFIG_PATHS, CompanionConfig, ConfigError, load_config, migrate_file
 from .config.templates import EXAMPLE_CONFIG
 from .security import tailscale as tailscale_mod
 from .setup import rclone as rclone_setup
@@ -65,7 +65,13 @@ def _load(config_path: Optional[str]) -> CompanionConfig:
             f"(installed: {__version__}). Run 'pip install --upgrade runtipi-companion'.[/yellow]"
         )
     try:
-        return load_config(config_path)
+        cfg = load_config(config_path)
+        if cfg.version < CONFIG_VERSION:
+            console.print(
+                f"[yellow]Config file is schema version {cfg.version} (current: {CONFIG_VERSION}). "
+                f"Run 'runtipi-companion config migrate --apply' to update it.[/yellow]"
+            )
+        return cfg
     except ConfigError as e:
         # First run on an interactive terminal: offer to build the config
         # right here instead of erroring out. Non-interactive callers
@@ -117,6 +123,23 @@ def config_wizard_cmd(
     automatically on first run when no config exists."""
     written = config_wizard.run_config_wizard(path)
     if written is None:
+        raise typer.Exit(1)
+
+
+@config_app.command("migrate")
+def config_migrate(
+    config: Optional[str] = ConfigOption,
+    dry_run: bool = DryRunOption,
+):
+    """Migrate the config file to the current schema version (version-based,
+    stepwise). Dry-run shows the steps and a diff; --apply backs up the
+    original next to it and rewrites the file. Hand-written comments are
+    lost on rewrite."""
+    path = config_wizard.find_config_file(config)
+    if path is None:
+        console.print("[red]No config file found.[/red]")
+        raise typer.Exit(1)
+    if not migrate_file(path, dry_run=dry_run):
         raise typer.Exit(1)
 
 

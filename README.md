@@ -137,6 +137,18 @@ See [`runtipi-companion.example.yaml`](./runtipi-companion.example.yaml) for
 every field with comments. Config is searched at `/etc/runtipi-companion/config.yaml`
 then `~/.config/runtipi-companion/config.yaml`, or pass `--config /path`.
 
+The file carries a `version:` schema number. When a companion update changes
+the config shape, every command prints a hint and
+
+```
+runtipi-companion config migrate            # preview steps + diff
+runtipi-companion config migrate --apply    # back up original, rewrite
+```
+
+upgrades the file stepwise (v1 → v2 → ...). Files without `version:` count
+as v1. A config *newer* than the installed companion is refused with a
+pointer to `self-update`.
+
 The part that matters most for the "individual retention per remote" ask:
 
 ```yaml
@@ -173,7 +185,7 @@ and prunes only its own subtree, and never touches another host's backups.
 ## Commands
 
 ```
-runtipi-companion config   wizard|init|show|validate
+runtipi-companion config   wizard|init|show|validate|migrate
 runtipi-companion backup   run|list|remotes
 runtipi-companion restore  run|list
 runtipi-companion update   apps|core|appstores

@@ -10,6 +10,11 @@ DEFAULT_CONFIG_PATHS = [
     Path.home() / ".config" / "runtipi-companion" / "config.yaml",
 ]
 
+# Schema version written into config files as `version:`. Files without the
+# key are treated as version 1 (pre-versioning). Bump this together with a
+# new migration step in migrations.py whenever the config shape changes.
+CONFIG_VERSION = 2
+
 VALID_SCHEDULES = ("daily", "weekly", "monthly", "yearly")
 
 
@@ -141,6 +146,7 @@ class NotifyConfig:
 
 @dataclass
 class CompanionConfig:
+    version: int = CONFIG_VERSION
     runtipi: RuntipiConfig = field(default_factory=RuntipiConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)

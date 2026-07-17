@@ -3,7 +3,9 @@ the bundled example config (templates). Everything public is re-exported
 here so callers just use `from ..config import ...`."""
 
 from .loader import load_config, validate_config
+from .migrations import migrate, migrate_file
 from .schema import (
+    CONFIG_VERSION,
     DEFAULT_CONFIG_PATHS,
     VALID_SCHEDULES,
     BackupConfig,
@@ -23,6 +25,7 @@ from .schema import (
 )
 
 __all__ = [
+    "CONFIG_VERSION",
     "DEFAULT_CONFIG_PATHS",
     "VALID_SCHEDULES",
     "BackupConfig",
@@ -40,5 +43,7 @@ __all__ = [
     "UFWConfig",
     "UpdatesConfig",
     "load_config",
+    "migrate",
+    "migrate_file",
     "validate_config",
 ]

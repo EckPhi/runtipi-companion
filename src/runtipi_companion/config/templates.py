@@ -8,6 +8,10 @@ EXAMPLE_CONFIG = """\
 # runtipi-companion configuration
 # See README.md for full documentation of every field.
 
+# Config schema version -- don't edit. 'runtipi-companion config migrate'
+# upgrades old files when a new companion version changes the schema.
+version: 2
+
 runtipi:
   path: /opt/runtipi
   # runtipi-cli is NOT on $PATH by default. We auto-detect <path>/runtipi-cli;
