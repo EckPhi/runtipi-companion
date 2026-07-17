@@ -26,6 +26,15 @@ def parse_backup_filename(filename: str) -> Optional[dict]:
     return m.groupdict()
 
 
+def select_latest(filenames: list) -> Optional[str]:
+    """Newest backup filename by the date embedded in the name (any schedule),
+    or None if nothing parses as a backup archive."""
+    parsed = [(p["date"], p.get("seq") or "", name) for name in filenames if (p := parse_backup_filename(name))]
+    if not parsed:
+        return None
+    return max(parsed)[2]
+
+
 def select_prunable(filenames: list, app: str, schedule: str, keep: int) -> list:
     """Given filenames in a directory (or remote listing), return the ones
     that should be deleted for a given app/schedule combo, keeping the

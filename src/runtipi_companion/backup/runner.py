@@ -9,7 +9,7 @@ from typing import Optional
 
 from rich.console import Console
 
-from ..config import CompanionConfig, RemoteConfig
+from ..config import CompanionConfig
 from ..system.runtipi_cli import RuntipiCLI
 from .rclone import RcloneClient
 from .retention import select_prunable
@@ -130,12 +130,14 @@ def run_backup(
         console.print("[yellow]No apps matched, nothing to back up.[/yellow]")
         return []
 
-    local_backup_root = Path(cfg.backup_local_path)
+    # Per-host subfolder so several machines can share one backup location
+    # (local NAS mount or remote bucket) without mixing archives.
+    host_backup_root = Path(cfg.backup_local_path) / cfg.host_label
     created_files = []
     date_str = time.strftime("%Y-%m-%d")
 
     for ref in app_refs:
-        app_backup_dir = local_backup_root / ref.store / ref.app_id
+        app_backup_dir = host_backup_root / ref.store / ref.app_id
         app_backup_dir.mkdir(parents=True, exist_ok=True)
         dest_file = app_backup_dir / f"{ref.app_id}-{schedule}-{date_str}.tar.gz"
 
@@ -200,7 +202,9 @@ def sync_to_remotes(
     dry_run: bool = False,
 ) -> None:
     rclone = RcloneClient(dry_run=dry_run)
-    local_backup_root = Path(cfg.backup_local_path)
+    # Sync and prune only this host's subtree: other hosts backing up to the
+    # same remote must never be touched by this machine's retention policy.
+    host_backup_root = Path(cfg.backup_local_path) / cfg.host_label
 
     for remote in cfg.backup.remotes:
         if not remote.enabled:
@@ -211,24 +215,27 @@ def sync_to_remotes(
         if remote_retention is None:
             continue  # this remote isn't configured to keep this schedule
 
+        remote_host_root = f"{remote.rclone_remote}/{cfg.host_label}"
         console.print(f"[bold]Syncing schedule '{schedule}' to remote '{remote.name}'[/bold]")
         rclone.sync_dir(
-            local_backup_root,
-            remote.rclone_remote,
+            host_backup_root,
+            remote_host_root,
             bandwidth_limit=remote.bandwidth_limit,
             extra_flags=remote.extra_rclone_flags,
         )
         if not dry_run:
-            prune_remote(rclone, remote, schedule, remote_retention)
+            prune_remote(rclone, remote_host_root, schedule, remote_retention)
         else:
             console.print(
                 f"[yellow]DRY-RUN[/yellow] would prune remote '{remote.name}' to {remote_retention} {schedule} backups per app"
             )
 
 
-def prune_remote(rclone: RcloneClient, remote: RemoteConfig, schedule: str, retention: int) -> None:
+def prune_remote(rclone: RcloneClient, remote_root: str, schedule: str, retention: int) -> None:
+    """Prune per app+schedule under `remote_root` (an rclone path already
+    scoped to one host's subtree)."""
     files_by_dir = {}
-    for path in rclone.list_files(remote.rclone_remote):
+    for path in rclone.list_files(remote_root):
         directory = str(Path(path).parent)
         files_by_dir.setdefault(directory, []).append(Path(path).name)
 
@@ -237,10 +244,6 @@ def prune_remote(rclone: RcloneClient, remote: RemoteConfig, schedule: str, rete
         for app in apps_in_dir:
             prunable = select_prunable(names, app, schedule, retention)
             for name in prunable:
-                remote_path = (
-                    f"{remote.rclone_remote}/{name}"
-                    if directory in (".", "")
-                    else f"{remote.rclone_remote}/{directory}/{name}"
-                )
+                remote_path = f"{remote_root}/{name}" if directory in (".", "") else f"{remote_root}/{directory}/{name}"
                 console.print(f"Pruning old remote backup {remote_path}")
                 rclone.delete_file(remote_path)

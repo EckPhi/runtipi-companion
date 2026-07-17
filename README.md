@@ -159,6 +159,16 @@ backup:
 A remote only receives backups for schedules it explicitly lists, and prunes
 itself independently of local disk and every other remote.
 
+Backups live in a per-machine subfolder, locally and on every remote:
+
+```
+<backup dir>/<host_label>/<store>/<app>/<app>-<schedule>-<date>.tar.gz
+```
+
+`backup.host_label` defaults to the machine's hostname (the config wizard
+asks about it too). Several machines can share one remote bucket: each syncs
+and prunes only its own subtree, and never touches another host's backups.
+
 ## Commands
 
 ```
@@ -241,11 +251,23 @@ but is deprecated.
 ## Restore
 
 ```
+runtipi-companion backup list                      # every app's latest backup (shows app ids)
 runtipi-companion restore list jellyfin --remote backblaze
 runtipi-companion restore run jellyfin jellyfin-daily-2026-07-01.tar.gz --from-remote backblaze --apply
 ```
 
 Omit `--from-remote` to restore from the local backup directory instead.
+
+Restoring **another machine's** backups (migration path): pass `--host` with
+that machine's label, or use the interactive picker (`restore run` with no
+arguments), which lists every host it finds on the chosen source. An empty
+listing also prints which other host labels exist.
+
+```
+runtipi-companion backup list --remote backblaze --host old-vps
+runtipi-companion restore run jellyfin jellyfin-daily-2026-07-01.tar.gz \
+    --from-remote backblaze --host old-vps --apply
+```
 
 ## Limitations / things to know
 

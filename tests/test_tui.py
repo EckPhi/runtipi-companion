@@ -136,14 +136,14 @@ def test_manage_remotes_quit_discards(tmp_path, monkeypatch):
 # ---- interactive restore ----
 
 
-def make_local_backups(tmp_path: Path) -> Path:
+def make_local_backups(tmp_path: Path, host: str = "boxa") -> Path:
     root = tmp_path / "backups"
     for store, app, name in [
         ("migrated", "hello", "hello-daily-2026-07-01.tar.gz"),
         ("migrated", "hello", "hello-daily-2026-07-02.tar.gz"),
         ("migrated", "world", "world-weekly-2026-07-01.tar.gz"),
     ]:
-        d = root / store / app
+        d = root / host / store / app
         d.mkdir(parents=True, exist_ok=True)
         (d / name).touch()
     return root
@@ -157,6 +157,7 @@ def load_cfg_with_backups(tmp_path: Path, root: Path, remotes: str = ""):
           path: /opt/runtipi
         backup:
           local_path: {root}
+          host_label: boxa
           {remotes}
         """,
     )
@@ -174,6 +175,7 @@ def test_interactive_restore_local(tmp_path, monkeypatch):
     assert sel.app_id == "hello"
     assert sel.backup_file == "hello-daily-2026-07-01.tar.gz"
     assert sel.from_remote is None
+    assert sel.host == "boxa"
 
 
 def test_interactive_restore_local_empty(tmp_path):
@@ -194,6 +196,7 @@ def test_interactive_restore_from_remote(tmp_path, monkeypatch):
                   retention: 14
           """,
     )
+    monkeypatch.setattr(RcloneClient, "list_dirs", lambda self, remote: ["boxa", "boxb"])
     monkeypatch.setattr(
         RcloneClient,
         "list_files",
@@ -202,9 +205,11 @@ def test_interactive_restore_from_remote(tmp_path, monkeypatch):
             "stray-file.txt",
         ],
     )
-    # pick source #2 (remote), app + file auto-picked (single options)
-    ScriptedPrompts(monkeypatch, [2])
+    # pick source #2 (remote), then host #2 (boxb -- cross-host restore),
+    # app + file auto-picked (single options)
+    ScriptedPrompts(monkeypatch, [2, 2])
     sel = tui.interactive_restore(cfg)
     assert sel.from_remote == "backblaze"
     assert sel.app_id == "hello"
-    assert sel.backup_file == "migrated/hello/hello-daily-2026-06-30.tar.gz"
+    assert sel.host == "boxb"
+    assert sel.backup_file == "boxb/migrated/hello/hello-daily-2026-06-30.tar.gz"

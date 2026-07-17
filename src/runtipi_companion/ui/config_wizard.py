@@ -9,6 +9,7 @@ it automatically when no config file is found on an interactive terminal.
 from __future__ import annotations
 
 import os
+import socket
 from pathlib import Path
 from typing import Optional
 
@@ -137,6 +138,13 @@ def gather_answers() -> dict:
 
     console.print("\n[bold]Backups[/bold]")
     local_path = _or_none(_ask(f"Local backup directory (empty = {runtipi_path}/backups)", default=""))
+    host_label = _or_none(
+        _ask(
+            "Backups are stored per machine under <backup dir>/<label>/. "
+            f"Label for this machine (empty = hostname '{socket.gethostname()}')",
+            default="",
+        )
+    )
     work_dir = _ask("Scratch directory for building archives", default="/tmp/runtipi-companion")
     stop_apps = _ask_bool("Stop apps while backing them up? (safer, brief downtime)", default=True)
     console.print("Local retention (how many archives to keep on this machine):")
@@ -208,6 +216,7 @@ def gather_answers() -> dict:
         "backup": {
             "work_dir": work_dir,
             "local_path": local_path,
+            "host_label": host_label,
             "stop_apps": stop_apps,
             "sleep_duration": 10,
             "schedules": schedules,

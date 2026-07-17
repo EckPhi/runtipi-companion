@@ -108,6 +108,7 @@ def test_full_wizard_run(tmp_path, monkeypatch):
             "",  # cli_path (auto-detect)
             "",  # apps (all)
             "",  # local backup dir (default)
+            "",  # host label (default hostname)
             "/tmp/runtipi-companion",  # work_dir
             True,  # stop apps
             True,
@@ -150,6 +151,7 @@ def test_wizard_abort_writes_nothing(tmp_path, monkeypatch):
             "",
             "",  # runtipi section
             "",
+            "",  # host label
             "/tmp/runtipi-companion",
             True,  # backup basics
             True,

@@ -169,21 +169,53 @@ def backup_run(
         raise
 
 
+HostOption = typer.Option(None, "--host", help="Which machine's backup subfolder (default: this machine's host label).")
+
+
 @backup_app.command("list")
 def backup_list(
-    app: str = typer.Argument(..., help="App id to list backups for."),
+    app: Optional[str] = typer.Argument(None, help="App id. Omit to show every app's latest backup."),
     remote: Optional[str] = typer.Option(None, help="List backups on this remote instead of locally."),
+    host: Optional[str] = HostOption,
     config: Optional[str] = ConfigOption,
 ):
+    """List backups. Without APP: one line per app with its newest archive
+    (also handy to look up app ids). With APP: every archive for that app."""
     cfg = _load(config)
+
+    if app is None:
+        if remote:
+            files = restore_mod._remote_files(cfg, remote, host or cfg.host_label)
+        else:
+            root = Path(cfg.backup_local_path) / (host or cfg.host_label)
+            files = [str(p.relative_to(root)) for p in root.glob("*/*/*.tar.gz")]
+        latest = restore_mod.latest_per_app(files)
+        if not latest:
+            console.print("No backups found.")
+            _print_known_hosts(cfg, remote)
+            return
+        for store, app_id, newest in latest:
+            console.print(f"{app_id}  [dim](store: {store}, latest: {newest})[/dim]")
+        return
+
     if remote:
-        files = restore_mod.list_remote_backups(cfg, remote, app)
+        files = restore_mod.list_remote_backups(cfg, remote, app, host=host)
     else:
-        files = [str(p) for p in restore_mod.list_local_backups(cfg, app)]
+        files = [str(p) for p in restore_mod.list_local_backups(cfg, app, host=host)]
     if not files:
         console.print("No backups found.")
+        _print_known_hosts(cfg, remote)
     for f in files:
         console.print(f)
+
+
+def _print_known_hosts(cfg: CompanionConfig, remote: Optional[str]) -> None:
+    """After an empty listing, show which host subfolders DO exist -- the
+    archive you're looking for may live under another machine's label."""
+    hosts = restore_mod.list_remote_hosts(cfg, remote) if remote else restore_mod.list_local_hosts(cfg)
+    others = [h for h in hosts if h != cfg.host_label]
+    if others:
+        console.print(f"Other hosts with backups here: {', '.join(others)} (use --host)")
 
 
 @backup_app.command("remotes")
@@ -203,10 +235,13 @@ def restore_run(
     backup_file: Optional[str] = typer.Argument(None, help="Filename as shown by 'backup list' (or 'restore list')."),
     store: str = typer.Option("migrated", "--store", help="App store name (see 'runtipi-cli installed')."),
     from_remote: Optional[str] = typer.Option(None, "--from-remote", help="Download from this remote first."),
+    host: Optional[str] = HostOption,
     config: Optional[str] = ConfigOption,
     yes: bool = YesOption,
     dry_run: bool = DryRunOption,
 ):
+    """Restore an app. --host restores another machine's backup onto this
+    one (migration path); the interactive picker offers every host it finds."""
     cfg = _load(config)
     if app_id is None or backup_file is None:
         if not sys.stdin.isatty():
@@ -219,18 +254,20 @@ def restore_run(
         backup_file = selection.backup_file
         store = selection.store
         from_remote = selection.from_remote
+        host = selection.host
     restore_mod.restore_backup(
-        cfg, store, app_id, backup_file, from_remote=from_remote, assume_yes=yes, dry_run=dry_run
+        cfg, store, app_id, backup_file, from_remote=from_remote, host=host, assume_yes=yes, dry_run=dry_run
     )
 
 
 @restore_app.command("list")
 def restore_list(
-    app_id: str = typer.Argument(...),
+    app_id: Optional[str] = typer.Argument(None),
     remote: Optional[str] = typer.Option(None),
+    host: Optional[str] = HostOption,
     config: Optional[str] = ConfigOption,
 ):
-    backup_list(app_id, remote, config)
+    backup_list(app_id, remote, host, config)
 
 
 # ---- update ----

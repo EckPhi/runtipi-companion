@@ -90,6 +90,7 @@ def load_config(path: Optional[str] = None) -> CompanionConfig:
         cfg.backup = BackupConfig(
             work_dir=b.get("work_dir", cfg.backup.work_dir),
             local_path=b.get("local_path"),
+            host_label=b.get("host_label"),
             stop_apps=b.get("stop_apps", True),
             sleep_duration=b.get("sleep_duration", 10),
             schedules=schedules,

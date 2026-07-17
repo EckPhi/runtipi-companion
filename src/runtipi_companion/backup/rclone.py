@@ -40,6 +40,13 @@ class RcloneClient:
             return []
         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
+    def list_dirs(self, remote: str) -> list:
+        """Immediate subdirectories of `remote` (no trailing slashes)."""
+        result = run(["rclone", "lsf", "--dirs-only", remote], dry_run=False, quiet=True, check=False)
+        if result.returncode != 0:
+            return []
+        return [line.strip().rstrip("/") for line in result.stdout.splitlines() if line.strip()]
+
     def delete_file(self, remote_path: str):
         return run(["rclone", "deletefile", remote_path], dry_run=self.dry_run)
 

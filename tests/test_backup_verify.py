@@ -66,3 +66,18 @@ def test_pre_update_retention_prunes_oldest():
     ]
     prunable = select_prunable(names, "jellyfin", "pre-update", keep=2)
     assert prunable == ["jellyfin-pre-update-2026-07-15.tar.gz"]
+
+
+def test_latest_per_app_groups_and_reduces():
+    from runtipi_companion.backup.restore import latest_per_app
+
+    files = [
+        "boxa/migrated/hello/hello-daily-2026-07-01.tar.gz",
+        "boxa/migrated/hello/hello-daily-2026-07-02.tar.gz",
+        "boxa/migrated/world/world-weekly-2026-07-01.tar.gz",
+        "stray.txt",
+    ]
+    assert latest_per_app(files) == [
+        ("migrated", "hello", "hello-daily-2026-07-02.tar.gz"),
+        ("migrated", "world", "world-weekly-2026-07-01.tar.gz"),
+    ]

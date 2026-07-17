@@ -48,3 +48,16 @@ def test_select_prunable_keep_more_than_exists():
 def test_select_prunable_negative_keep_treated_as_zero():
     files = ["jellyfin-daily-2026-07-01.tar.gz"]
     assert select_prunable(files, "jellyfin", "daily", keep=-1) == files
+
+
+def test_select_latest_picks_newest_across_schedules():
+    from runtipi_companion.backup.retention import select_latest
+
+    names = [
+        "app-daily-2026-07-01.tar.gz",
+        "app-weekly-2026-07-15.tar.gz",
+        "app-daily-2026-07-10.tar.gz",
+        "junk.txt",
+    ]
+    assert select_latest(names) == "app-weekly-2026-07-15.tar.gz"
+    assert select_latest(["junk.txt"]) is None

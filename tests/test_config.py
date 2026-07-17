@@ -162,3 +162,29 @@ def test_backup_before_can_be_disabled(tmp_path):
     """,
     )
     assert load_config(str(p)).updates.backup_before is False
+
+
+def test_host_label_defaults_to_hostname(tmp_path):
+    import socket
+
+    p = write_config(
+        tmp_path,
+        """
+        runtipi:
+          path: /opt/runtipi
+    """,
+    )
+    assert load_config(str(p)).host_label == socket.gethostname()
+
+
+def test_host_label_override(tmp_path):
+    p = write_config(
+        tmp_path,
+        """
+        runtipi:
+          path: /opt/runtipi
+        backup:
+          host_label: nas-primary
+    """,
+    )
+    assert load_config(str(p)).host_label == "nas-primary"

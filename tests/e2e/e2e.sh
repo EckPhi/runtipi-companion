@@ -59,6 +59,7 @@ runtipi:
 backup:
   work_dir: $WORK/scratch
   local_path: $BACKUP_DIR
+  host_label: e2ehost
   stop_apps: true
   sleep_duration: 0
   schedules:
@@ -82,9 +83,9 @@ say "Setup wizard (dry-run)"
 "${RC[@]}" setup wizard --config "$CFG" --yes
 
 say "Seed two old archives to prove retention pruning"
-mkdir -p "$BACKUP_DIR/migrated/e2etest"
-tar -czf "$BACKUP_DIR/migrated/e2etest/e2etest-daily-2020-01-01.tar.gz" -T /dev/null
-tar -czf "$BACKUP_DIR/migrated/e2etest/e2etest-daily-2020-01-02.tar.gz" -T /dev/null
+mkdir -p "$BACKUP_DIR/e2ehost/migrated/e2etest"
+tar -czf "$BACKUP_DIR/e2ehost/migrated/e2etest/e2etest-daily-2020-01-01.tar.gz" -T /dev/null
+tar -czf "$BACKUP_DIR/e2ehost/migrated/e2etest/e2etest-daily-2020-01-02.tar.gz" -T /dev/null
 
 say "Backup: dry-run preview, then apply"
 "${RC[@]}" backup run --type daily --config "$CFG"
@@ -92,19 +93,20 @@ say "Backup: dry-run preview, then apply"
 
 TODAY=$(date +%F)
 ARCHIVE="e2etest-daily-$TODAY.tar.gz"
-test -f "$BACKUP_DIR/migrated/e2etest/$ARCHIVE" || fail "local archive was not created"
-test ! -f "$BACKUP_DIR/migrated/e2etest/e2etest-daily-2020-01-01.tar.gz" \
+test -f "$BACKUP_DIR/e2ehost/migrated/e2etest/$ARCHIVE" || fail "local archive was not created"
+test ! -f "$BACKUP_DIR/e2ehost/migrated/e2etest/e2etest-daily-2020-01-01.tar.gz" \
   || fail "local retention (2) did not prune the oldest archive"
 [ "$(find "$BACKUP_DIR" -name '*.tar.gz' | wc -l)" -eq 2 ] || fail "expected exactly 2 local archives"
 
 say "Verify remote sync + remote-specific retention (1)"
-test -f "$REMOTE_DIR/migrated/e2etest/$ARCHIVE" || fail "archive was not synced to the rclone remote"
+test -f "$REMOTE_DIR/e2ehost/migrated/e2etest/$ARCHIVE" || fail "archive was not synced to the rclone remote"
 [ "$(find "$REMOTE_DIR" -name '*.tar.gz' | wc -l)" -eq 1 ] \
   || fail "remote retention (1) should leave exactly 1 archive on the remote"
 
-say "backup list (local + remote)"
+say "backup list (local + remote + latest-per-app summary)"
 "${RC[@]}" backup list e2etest --config "$CFG" | grep -q "$ARCHIVE" || fail "'backup list' missing local archive"
 "${RC[@]}" backup list e2etest --remote cloud --config "$CFG" | grep -q "$ARCHIVE" || fail "'backup list --remote' missing archive"
+"${RC[@]}" backup list --config "$CFG" | grep -q "e2etest" || fail "'backup list' without app did not list the app"
 
 say "Restore from local backup"
 echo "corrupted" > "$RUNTIPI_DIR/app-data/migrated/e2etest/data.txt"
@@ -116,7 +118,7 @@ grep -q "USER_SETTING=1" "$RUNTIPI_DIR/user-config/migrated/e2etest/app.env" \
 
 say "Restore from the rclone remote"
 echo "corrupted again" > "$RUNTIPI_DIR/app-data/migrated/e2etest/data.txt"
-"${RC[@]}" restore run e2etest "migrated/e2etest/$ARCHIVE" --from-remote cloud --config "$CFG" --apply --yes
+"${RC[@]}" restore run e2etest "e2ehost/migrated/e2etest/$ARCHIVE" --from-remote cloud --config "$CFG" --apply --yes
 grep -q "precious-data-v1" "$RUNTIPI_DIR/app-data/migrated/e2etest/data.txt" \
   || fail "remote restore did not bring app-data back"
 

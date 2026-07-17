@@ -21,6 +21,10 @@ backup:
   work_dir: /tmp/runtipi-companion
   # Defaults to <runtipi.path>/backups if unset.
   local_path: null
+  # Backups live in a per-machine subfolder: <local_path>/<host_label>/<store>/<app>/.
+  # Remotes get the same layout, so several machines can share one bucket and
+  # never prune each other. Defaults to this machine's hostname.
+  host_label: null
   stop_apps: true
   sleep_duration: 10
 

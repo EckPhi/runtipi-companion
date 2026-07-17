@@ -27,6 +27,7 @@ class RestoreSelection:
     app_id: str
     backup_file: str  # filename for local, remote-relative path for remotes
     from_remote: Optional[str] = None
+    host: Optional[str] = None  # which machine's backup subtree it came from
 
 
 def multi_select(prompt: str, options: list) -> list:
@@ -87,6 +88,14 @@ def pick(prompt: str, options: list) -> int:
         console.print(f"[red]Enter a number between 1 and {len(options)}.[/red]")
 
 
+def _pick_host(hosts: list, own: str) -> int:
+    """Pick a host subfolder; this machine's own label sorts first and is
+    marked. Restoring another machine's backups is the migration path."""
+    hosts.sort(key=lambda h: (h != own, h))
+    labels = [f"{h} (this machine)" if h == own else h for h in hosts]
+    return pick("Which machine's backups", labels)
+
+
 def _pick_app_and_file(archives: dict) -> tuple:
     """archives: {(store, app_id): [file, ...]} -> ((store, app_id), file)"""
     apps = sorted(archives)
@@ -108,30 +117,38 @@ def interactive_restore(cfg: CompanionConfig) -> Optional[RestoreSelection]:
 
     if source_idx == 0:
         root = Path(cfg.backup_local_path)
-        found = sorted(root.glob("*/*/*.tar.gz"))
-        if not found:
+        hosts = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
+        if not hosts:
             console.print(f"[yellow]No local backups under {root}.[/yellow]")
+            return None
+        host = hosts[_pick_host(hosts, cfg.host_label)]
+        found = sorted((root / host).glob("*/*/*.tar.gz"))
+        if not found:
+            console.print(f"[yellow]No local backups under {root / host}.[/yellow]")
             return None
         archives = {}
         for p in found:
-            # <root>/<store>/<app>/<app>-<schedule>-<date>.tar.gz
+            # <root>/<host>/<store>/<app>/<app>-<schedule>-<date>.tar.gz
             archives.setdefault((p.parent.parent.name, p.parent.name), []).append(p.name)
         (store, app_id), filename = _pick_app_and_file(archives)
-        return RestoreSelection(store=store, app_id=app_id, backup_file=filename)
+        return RestoreSelection(store=store, app_id=app_id, backup_file=filename, host=host)
 
     remote = cfg.backup.remotes[source_idx - 1]
-    files = [f for f in RcloneClient().list_files(remote.rclone_remote) if f.endswith(".tar.gz")]
-    if not files:
+    rclone = RcloneClient()
+    hosts = rclone.list_dirs(remote.rclone_remote)
+    if not hosts:
         console.print(f"[yellow]No backups found on remote '{remote.name}'.[/yellow]")
         return None
+    host = hosts[_pick_host(hosts, cfg.host_label)]
+    files = [f for f in rclone.list_files(f"{remote.rclone_remote}/{host}") if f.endswith(".tar.gz")]
     archives = {}
     for f in files:
         parts = Path(f).parts
         if len(parts) < 3:
             continue  # not in <store>/<app>/<file> layout, skip
-        archives.setdefault((parts[0], parts[1]), []).append(f)
+        archives.setdefault((parts[0], parts[1]), []).append(f"{host}/{f}")
     if not archives:
-        console.print(f"[yellow]Remote '{remote.name}' has no backups in the expected store/app layout.[/yellow]")
+        console.print(f"[yellow]Remote '{remote.name}' has no backups in the expected host/store/app layout.[/yellow]")
         return None
     (store, app_id), remote_path = _pick_app_and_file(archives)
-    return RestoreSelection(store=store, app_id=app_id, backup_file=remote_path, from_remote=remote.name)
+    return RestoreSelection(store=store, app_id=app_id, backup_file=remote_path, from_remote=remote.name, host=host)

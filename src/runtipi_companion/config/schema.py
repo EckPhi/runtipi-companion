@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -46,6 +47,11 @@ class RuntipiConfig:
 class BackupConfig:
     work_dir: str = "/tmp/runtipi-companion"
     local_path: Optional[str] = None  # defaults to <runtipi.path>/backups
+    # Subfolder under local_path (and on every remote) that this machine's
+    # backups live in: <local_path>/<host_label>/<store>/<app>/. Defaults to
+    # the machine's hostname, so several boxes can share one remote bucket
+    # without clobbering or pruning each other.
+    host_label: Optional[str] = None
     stop_apps: bool = True
     sleep_duration: int = 10
     schedules: dict = field(
@@ -144,3 +150,7 @@ class CompanionConfig:
     @property
     def backup_local_path(self) -> str:
         return self.backup.local_path or str(Path(self.runtipi.path) / "backups")
+
+    @property
+    def host_label(self) -> str:
+        return self.backup.host_label or socket.gethostname()

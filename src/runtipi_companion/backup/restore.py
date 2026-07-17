@@ -13,26 +13,68 @@ from ..config import CompanionConfig
 from ..system.runtipi_cli import RuntipiCLI
 from ..system.shell import confirm, run
 from .rclone import RcloneClient
+from .retention import select_latest
 
 console = Console()
 
 
-def list_local_backups(cfg: CompanionConfig, app_id: str, store: Optional[str] = None) -> list:
-    root = Path(cfg.backup_local_path)
+def list_local_backups(
+    cfg: CompanionConfig, app_id: str, store: Optional[str] = None, host: Optional[str] = None
+) -> list:
+    root = Path(cfg.backup_local_path) / (host or cfg.host_label)
     if store:
         return sorted((root / store / app_id).glob(f"{app_id}-*.tar.gz"))
     return sorted(root.glob(f"*/{app_id}/{app_id}-*.tar.gz"))
 
 
-def list_remote_backups(cfg: CompanionConfig, remote_name: str, app_id: str) -> list:
+def _remote_files(cfg: CompanionConfig, remote_name: str, host: str) -> list:
+    """Remote-relative paths (including the host prefix) under one host's
+    subtree of the given remote."""
     remote = cfg.backup.remote(remote_name)
     if not remote:
-        raise ValueError(
-            f"Unknown remote '{remote_name}'. Configured remotes: " f"{[r.name for r in cfg.backup.remotes]}"
-        )
+        raise ValueError(f"Unknown remote '{remote_name}'. Configured remotes: {[r.name for r in cfg.backup.remotes]}")
     rclone = RcloneClient()
-    all_files = rclone.list_files(remote.rclone_remote)
-    return [f for f in all_files if Path(f).name.startswith(f"{app_id}-")]
+    return [f"{host}/{f}" for f in rclone.list_files(f"{remote.rclone_remote}/{host}")]
+
+
+def list_remote_backups(cfg: CompanionConfig, remote_name: str, app_id: str, host: Optional[str] = None) -> list:
+    files = _remote_files(cfg, remote_name, host or cfg.host_label)
+    return [f for f in files if Path(f).name.startswith(f"{app_id}-")]
+
+
+def list_remote_hosts(cfg: CompanionConfig, remote_name: str) -> list:
+    """Host subfolders present on a remote -- other machines backing up to
+    the same bucket show up here, so their backups can be restored too."""
+    remote = cfg.backup.remote(remote_name)
+    if not remote:
+        raise ValueError(f"Unknown remote '{remote_name}'")
+    return RcloneClient().list_dirs(remote.rclone_remote)
+
+
+def list_local_hosts(cfg: CompanionConfig) -> list:
+    root = Path(cfg.backup_local_path)
+    if not root.is_dir():
+        return []
+    return sorted(p.name for p in root.iterdir() if p.is_dir())
+
+
+def latest_per_app(files: list) -> list:
+    """Group <...>/<store>/<app>/<file> paths and reduce each app to its
+    newest archive (by the date in the filename). Returns
+    [(store, app_id, filename), ...] sorted by app.
+    """
+    grouped = {}
+    for f in files:
+        parts = Path(f).parts
+        if len(parts) < 3:
+            continue
+        grouped.setdefault((parts[-3], parts[-2]), []).append(Path(f).name)
+    out = []
+    for (store, app_id), names in sorted(grouped.items()):
+        newest = select_latest(names)
+        if newest:
+            out.append((store, app_id, newest))
+    return out
 
 
 def restore_backup(
@@ -42,14 +84,20 @@ def restore_backup(
     backup_file: str,
     *,
     from_remote: Optional[str] = None,
+    host: Optional[str] = None,
     assume_yes: bool = False,
     dry_run: bool = False,
 ) -> None:
     """Restore a single app from a runtipi-companion backup archive.
 
-    This reverses `_archive_app` in backup.py: extracts the app/app-data/
+    This reverses `_archive_app` in runner.py: extracts the app/app-data/
     user-config members from the tar.gz and drops them back into their
     real locations under the runtipi install, replacing whatever is there.
+
+    `host` selects which machine's backup subtree to restore from (default:
+    this machine's own host label) -- restoring another box's backups onto
+    this one is a supported migration path. For remote restores a
+    host-prefixed remote-relative path in `backup_file` wins over `host`.
     """
     cli = RuntipiCLI(cfg.runtipi.path, cfg.runtipi.cli_path, dry_run=dry_run)
 
@@ -57,16 +105,21 @@ def restore_backup(
         remote = cfg.backup.remote(from_remote)
         if not remote:
             raise ValueError(f"Unknown remote '{from_remote}'")
-        local_target = Path(cfg.backup.work_dir) / "restore" / backup_file
+        # Bare filenames get the full <host>/<store>/<app>/ prefix added;
+        # paths (as printed by 'backup list --remote') are used verbatim.
+        remote_rel = backup_file
+        if "/" not in backup_file:
+            remote_rel = f"{host or cfg.host_label}/{store}/{app_id}/{backup_file}"
+        local_target = Path(cfg.backup.work_dir) / "restore" / Path(remote_rel).name
         local_target.parent.mkdir(parents=True, exist_ok=True)
-        console.print(f"Downloading {backup_file} from remote '{from_remote}'")
+        console.print(f"Downloading {remote_rel} from remote '{from_remote}'")
         run(
-            ["rclone", "copyto", f"{remote.rclone_remote}/{backup_file}", str(local_target)],
+            ["rclone", "copyto", f"{remote.rclone_remote}/{remote_rel}", str(local_target)],
             dry_run=dry_run,
         )
         archive_path = local_target
     else:
-        archive_path = Path(cfg.backup_local_path) / store / app_id / backup_file
+        archive_path = Path(cfg.backup_local_path) / (host or cfg.host_label) / store / app_id / backup_file
         if not archive_path.exists() and not dry_run:
             raise FileNotFoundError(
                 f"Backup not found: {archive_path}\n"
