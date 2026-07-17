@@ -141,7 +141,7 @@ echo "$OUT" | grep -q "UFW firewall plan" \
 if command -v tailscale >/dev/null; then
   say "Tailscale (status + dry-run install plan)"
   "${RC[@]}" tailscale status
-  "${RC[@]}" tailscale install --config "$CFG"
+  "${RC[@]}" setup tailscale --config "$CFG"
 else
   say "Tailscale not installed, skipping tailscale checks"
 fi

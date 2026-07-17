@@ -188,7 +188,7 @@ def harden_tailscale_security(cfg: CompanionConfig, *, dry_run: bool = True, ass
 
     console.print("[bold]Tailscale-only access plan[/bold]")
     if shutil.which("tailscale") is None:
-        console.print("[red]tailscale binary not found.[/red] Run 'runtipi-companion tailscale install --apply' first.")
+        console.print("[red]tailscale binary not found.[/red] Run 'runtipi-companion setup tailscale --apply' first.")
         return
 
     if ts_cfg.tailscale_ssh:

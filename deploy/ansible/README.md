@@ -38,7 +38,7 @@ ansible-playbook -i inventory.yml install.yml \
 | `companion_run_setup` | `true` | Run `setup wizard --yes --apply` (clone runtipi if missing, prepare, start, create backup dirs). |
 | `companion_harden` | `false` | Run `security harden` with `companion_harden_flags`. |
 | `companion_harden_flags` | `--ssh --ufw --fail2ban` | Which hardening steps to apply. |
-| `companion_tailscale_install` | `false` | Run `tailscale install --yes --apply`. |
+| `companion_tailscale_install` | `false` | Run `setup tailscale --yes --apply`. |
 | `companion_tailscale_security` | `false` | **Danger, read below.** Run `security harden --tailscale-security`. |
 | `companion_install_timers` | `true` | Run `setup services` to install + enable the bundled systemd backup timers. |
 | `companion_timers` | daily, weekly, monthly | Which timers to enable. |

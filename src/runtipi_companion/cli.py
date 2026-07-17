@@ -325,14 +325,6 @@ def security_status(config: Optional[str] = ConfigOption):
 # ---- tailscale ----
 
 
-@tailscale_app.command("install", hidden=True)
-def tailscale_install(config: Optional[str] = ConfigOption, yes: bool = YesOption, dry_run: bool = DryRunOption):
-    """Deprecated alias for 'setup tailscale'."""
-    console.print("[yellow]'tailscale install' is deprecated; use 'setup tailscale' instead.[/yellow]")
-    cfg = _load(config)
-    tailscale_mod.install_tailscale(cfg, dry_run=dry_run, assume_yes=yes)
-
-
 @tailscale_app.command("status")
 def tailscale_status():
     tailscale_mod.status()

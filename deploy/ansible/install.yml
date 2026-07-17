@@ -98,7 +98,7 @@
 
     - name: Install tailscale
       ansible.builtin.command: >-
-        {{ companion_bin }} tailscale install
+        {{ companion_bin }} setup tailscale
         --config {{ companion_config_path }} --yes --apply
       when: companion_tailscale_install
       changed_when: true
