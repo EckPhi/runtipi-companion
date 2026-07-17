@@ -180,6 +180,7 @@ runtipi-companion update   apps|core|appstores
 runtipi-companion setup    wizard|services|rclone|fail2ban|tailscale   # bare 'setup' = wizard
 runtipi-companion security harden|status
 runtipi-companion tailscale status
+runtipi-companion notify   test   # send a test message to every channel
 runtipi-companion doctor        # health audit: pass/warn/fail, changes nothing
 runtipi-companion self-update   # upgrade this tool from PyPI (pipx or pip)
 runtipi-companion version
@@ -248,6 +249,17 @@ Backup runs notify on failure (and optionally success) with proper
 success/failure message types -- ntfy users get priority/color out of the
 box. The old single `notify.webhook_url` (generic JSON POST) still works
 but is deprecated.
+
+Verify your channels actually deliver before trusting them with failure
+alerts:
+
+```
+runtipi-companion notify test
+```
+
+sends a test message to every configured channel and reports each result
+(regular runs deliberately swallow notification errors; the test command
+does the opposite). Exits non-zero if any channel fails.
 
 ## Restore
 

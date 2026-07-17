@@ -102,7 +102,8 @@ updates:
 
 notify:
   # Apprise URLs (https://github.com/caronc/apprise) -- any number, each one
-  # receives every notification. Examples:
+  # receives every notification. Verify with: runtipi-companion notify test
+  # Examples:
   #   - ntfy://ntfy.sh/my-topic
   #   - discord://webhook_id/webhook_token
   #   - mailto://user:app-password@gmail.com

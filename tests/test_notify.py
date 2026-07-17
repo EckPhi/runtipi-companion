@@ -76,3 +76,58 @@ def test_no_channels_configured_is_a_noop(monkeypatch):
     _stub_apprise(monkeypatch)
     notify_mod.notify(NotifyConfig(notify_on_success=True), "hi", success=True)
     assert StubAppriseClient.instances == []
+
+
+# ---- notify test command ----
+
+
+def test_notify_test_no_channels_fails():
+    from runtipi_companion.system.notify import notify_test
+
+    assert notify_test(NotifyConfig()) is False
+
+
+def test_notify_test_invalid_apprise_url_fails_without_network():
+    from runtipi_companion.system.notify import notify_test
+
+    cfg = NotifyConfig(urls=["definitely not a url"])
+    assert notify_test(cfg) is False
+
+
+def test_notify_test_legacy_webhook_reports_success(monkeypatch):
+    import urllib.request
+
+    from runtipi_companion.system.notify import notify_test
+
+    calls = []
+
+    class FakeResp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=10):
+        calls.append(req.full_url)
+        return FakeResp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    cfg = NotifyConfig(webhook_url="https://example.invalid/hook")
+    assert notify_test(cfg) is True
+    assert calls == ["https://example.invalid/hook"]
+
+
+def test_notify_test_legacy_webhook_reports_failure(monkeypatch):
+    import urllib.request
+
+    from runtipi_companion.system.notify import notify_test
+
+    def fake_urlopen(req, timeout=10):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    cfg = NotifyConfig(webhook_url="https://example.invalid/hook")
+    assert notify_test(cfg) is False

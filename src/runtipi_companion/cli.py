@@ -22,7 +22,7 @@ from .setup import rclone as rclone_setup
 from .setup import services as services_mod
 from .setup import wizard as setup_wizard
 from .system import version_check
-from .system.notify import notify
+from .system.notify import notify, notify_test
 from .system.shell import CommandError
 from .system.shell import run as shell_run
 from .ui import config_wizard, tui
@@ -45,6 +45,7 @@ update_app = typer.Typer(help="Update apps, app stores, or Runtipi core.", no_ar
 security_app = typer.Typer(help="VPS/server hardening (SSH, UFW, fail2ban).", no_args_is_help=True)
 tailscale_app = typer.Typer(help="Install and configure Tailscale.", no_args_is_help=True)
 setup_app = typer.Typer(help="Guided setup: wizard (default), systemd services, rclone, fail2ban, tailscale.")
+notify_app = typer.Typer(help="Notification channels (apprise URLs + legacy webhook).", no_args_is_help=True)
 
 app.add_typer(config_app, name="config")
 app.add_typer(backup_app, name="backup")
@@ -53,6 +54,7 @@ app.add_typer(update_app, name="update")
 app.add_typer(security_app, name="security")
 app.add_typer(tailscale_app, name="tailscale")
 app.add_typer(setup_app, name="setup")
+app.add_typer(notify_app, name="notify")
 
 
 def _load(config_path: Optional[str]) -> CompanionConfig:
@@ -455,6 +457,16 @@ def setup_tailscale_cmd(config: Optional[str] = ConfigOption, yes: bool = YesOpt
     named by tailscale.auth_key_env)."""
     cfg = _load(config)
     tailscale_mod.install_tailscale(cfg, dry_run=dry_run, assume_yes=yes)
+
+
+@notify_app.command("test")
+def notify_test_cmd(config: Optional[str] = ConfigOption):
+    """Send a test message to every configured notification channel and
+    report per-channel results. Ignores the on-success/on-failure gates.
+    Exits non-zero if any channel fails (or none are configured)."""
+    cfg = _load(config)
+    if not notify_test(cfg.notify):
+        raise typer.Exit(1)
 
 
 @app.command("doctor")
