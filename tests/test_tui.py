@@ -1,9 +1,9 @@
 import textwrap
 from pathlib import Path
 
-from runtipi_companion.ui import config_wizard, tui
-from runtipi_companion.config import load_config
 from runtipi_companion.backup.rclone import RcloneClient
+from runtipi_companion.config import load_config
+from runtipi_companion.ui import config_wizard, tui
 
 from .test_config_wizard import ScriptedPrompts
 
@@ -72,8 +72,11 @@ def test_manage_remotes_add_and_save(tmp_path, monkeypatch):
             "gdrive",  # name
             "gdrive:runtipi-backups",  # target
             "",  # bandwidth
-            True, 14,  # daily retention
-            False, False, False,  # other schedules
+            True,
+            14,  # daily retention
+            False,
+            False,
+            False,  # other schedules
             "s",  # save & exit
         ],
     )
@@ -95,8 +98,11 @@ def test_manage_remotes_edit_keeps_other_fields(tmp_path, monkeypatch):
             "backblaze",  # keep name
             "b2:new-bucket/runtipi",  # new target
             "",  # bandwidth
-            True, 30,  # daily retention bumped
-            False, False, False,
+            True,
+            30,  # daily retention bumped
+            False,
+            False,
+            False,
             "s",
         ],
     )

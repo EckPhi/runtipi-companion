@@ -49,7 +49,9 @@ def install_tailscale(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes:
 
     run(["sh", "-c", f"curl -fsSL {INSTALL_URL} | sh"], sudo=True)
     run(up_cmd, sudo=True)
-    console.print("[green]Tailscale installed.[/green] Run 'runtipi-companion tailscale status' to see your device's IP.")
+    console.print(
+        "[green]Tailscale installed.[/green] Run 'runtipi-companion tailscale status' to see your device's IP."
+    )
 
 
 def status() -> None:

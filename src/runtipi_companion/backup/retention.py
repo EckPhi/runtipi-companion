@@ -3,6 +3,7 @@
 Kept dependency-free (no filesystem or subprocess calls) so it's trivial to
 unit test in isolation from real backups/remotes.
 """
+
 from __future__ import annotations
 
 import re

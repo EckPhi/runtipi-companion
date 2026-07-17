@@ -11,21 +11,20 @@ from rich.console import Console
 
 from . import __version__
 from . import backup as backup_mod
-from .ui import config_wizard
 from . import doctor as doctor_mod
-from .backup import restore as restore_mod
 from . import security as security_mod
+from . import update as update_mod
+from .backup import restore as restore_mod
+from .config import DEFAULT_CONFIG_PATHS, CompanionConfig, ConfigError, load_config
+from .config.templates import EXAMPLE_CONFIG
+from .security import tailscale as tailscale_mod
 from .setup import rclone as rclone_setup
 from .setup import services as services_mod
 from .setup import wizard as setup_wizard
-from .security import tailscale as tailscale_mod
-from .ui import tui
-from . import update as update_mod
 from .system import version_check
-from .config import DEFAULT_CONFIG_PATHS, CompanionConfig, ConfigError, load_config
 from .system.notify import notify
 from .system.shell import run as shell_run
-from .config.templates import EXAMPLE_CONFIG
+from .ui import config_wizard, tui
 
 console = Console()
 
@@ -41,9 +40,7 @@ restore_app = typer.Typer(help="Restore apps from a backup.", no_args_is_help=Tr
 update_app = typer.Typer(help="Update apps, app stores, or Runtipi core.", no_args_is_help=True)
 security_app = typer.Typer(help="VPS/server hardening (SSH, UFW, fail2ban).", no_args_is_help=True)
 tailscale_app = typer.Typer(help="Install and configure Tailscale.", no_args_is_help=True)
-setup_app = typer.Typer(
-    help="Guided setup: wizard (default), systemd services, rclone, fail2ban, tailscale."
-)
+setup_app = typer.Typer(help="Guided setup: wizard (default), systemd services, rclone, fail2ban, tailscale.")
 
 app.add_typer(config_app, name="config")
 app.add_typer(backup_app, name="backup")
@@ -74,7 +71,7 @@ def _load(config_path: Optional[str]) -> CompanionConfig:
                 if written is not None:
                     return load_config(str(written))
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 ConfigOption = typer.Option(None, "--config", "-c", help="Path to config file.")
@@ -106,7 +103,9 @@ def config_init(
 
 @config_app.command("wizard")
 def config_wizard_cmd(
-    path: Optional[str] = typer.Option(None, "--path", help="Where to write the config file (default: asked interactively)."),
+    path: Optional[str] = typer.Option(
+        None, "--path", help="Where to write the config file (default: asked interactively)."
+    ),
 ):
     """Interactive wizard that builds and writes a config file. Also offered
     automatically on first run when no config exists."""
@@ -134,8 +133,12 @@ def config_validate(config: Optional[str] = ConfigOption):
 @backup_app.command("run")
 def backup_run(
     schedule: str = typer.Option("daily", "--type", help="daily|weekly|monthly|yearly"),
-    apps: Optional[str] = typer.Option(None, "--apps", help="Comma-separated app ids (default: all configured/installed)."),
-    remotes: Optional[str] = typer.Option(None, "--remote", help="Comma-separated remote names to sync to (default: all enabled)."),
+    apps: Optional[str] = typer.Option(
+        None, "--apps", help="Comma-separated app ids (default: all configured/installed)."
+    ),
+    remotes: Optional[str] = typer.Option(
+        None, "--remote", help="Comma-separated remote names to sync to (default: all enabled)."
+    ),
     local_only: bool = typer.Option(False, "--local-only", help="Skip syncing to remotes."),
     stop: Optional[bool] = typer.Option(None, "--stop/--no-stop", help="Override backup.stop_apps."),
     config: Optional[str] = ConfigOption,
@@ -157,7 +160,9 @@ def backup_run(
             dry_run=dry_run,
         )
         if not dry_run:
-            notify(cfg.notify, f"runtipi-companion: {schedule} backup completed ({len(created)} archives)", success=True)
+            notify(
+                cfg.notify, f"runtipi-companion: {schedule} backup completed ({len(created)} archives)", success=True
+            )
     except Exception as e:
         if not dry_run:
             notify(cfg.notify, f"runtipi-companion: {schedule} backup FAILED: {e}", success=False)
@@ -376,7 +381,7 @@ def setup_services_cmd(
         )
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @setup_app.command("rclone")

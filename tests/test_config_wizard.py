@@ -1,9 +1,7 @@
-from pathlib import Path
-
 import pytest
 
-from runtipi_companion.ui import config_wizard
 from runtipi_companion.config import ConfigError, load_config
+from runtipi_companion.ui import config_wizard
 
 
 def make_answers(**overrides):
@@ -112,7 +110,8 @@ def test_full_wizard_run(tmp_path, monkeypatch):
             "",  # local backup dir (default)
             "/tmp/runtipi-companion",  # work_dir
             True,  # stop apps
-            True, 7,  # keep daily locally, retention
+            True,
+            7,  # keep daily locally, retention
             False,  # weekly
             False,  # monthly
             False,  # yearly
@@ -120,8 +119,11 @@ def test_full_wizard_run(tmp_path, monkeypatch):
             "backblaze",  # remote name
             "b2:bucket/runtipi",  # rclone target
             "",  # bandwidth limit
-            True, 14,  # remote daily retention
-            False, False, False,  # remote weekly/monthly/yearly
+            True,
+            14,  # remote daily retention
+            False,
+            False,
+            False,  # remote weekly/monthly/yearly
             False,  # add another remote
             True,  # recommended security defaults
             False,  # tailscale
@@ -144,9 +146,17 @@ def test_wizard_abort_writes_nothing(tmp_path, monkeypatch):
     ScriptedPrompts(
         monkeypatch,
         [
-            "/opt/runtipi", "", "",  # runtipi section
-            "", "/tmp/runtipi-companion", True,  # backup basics
-            True, 7, False, False, False,  # local schedules
+            "/opt/runtipi",
+            "",
+            "",  # runtipi section
+            "",
+            "/tmp/runtipi-companion",
+            True,  # backup basics
+            True,
+            7,
+            False,
+            False,
+            False,  # local schedules
             False,  # no remotes
             True,  # recommended security
             False,  # tailscale
@@ -167,7 +177,10 @@ def test_remote_without_schedule_gets_daily_fallback(monkeypatch):
             "gdrive",
             "gdrive:runtipi-backups",
             "",  # bandwidth
-            False, False, False, False,  # decline every schedule
+            False,
+            False,
+            False,
+            False,  # decline every schedule
             False,  # no more remotes
         ],
     )

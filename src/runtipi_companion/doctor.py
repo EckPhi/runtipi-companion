@@ -5,6 +5,7 @@ VPS-security checklist instead of applying changes (the read-only sibling of
 Check helpers that parse command output are kept pure (take strings, return
 results) so they're unit-testable without root or a real box.
 """
+
 from __future__ import annotations
 
 import os
@@ -18,9 +19,9 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__
-from .system import version_check
-from .config import CompanionConfig
 from .backup.rclone import RcloneClient
+from .config import CompanionConfig
+from .system import version_check
 from .system.runtipi_cli import RuntipiCLI, RuntipiCLIError
 from .system.shell import run
 
@@ -128,9 +129,7 @@ def _check_backups(cfg: CompanionConfig) -> list:
     results = []
     backup_root = Path(cfg.backup_local_path)
     if not backup_root.is_dir():
-        results.append(
-            CheckResult("backup directory", WARN, f"{backup_root} missing (created on first backup)")
-        )
+        results.append(CheckResult("backup directory", WARN, f"{backup_root} missing (created on first backup)"))
         return results
     if not os.access(backup_root, os.W_OK):
         results.append(CheckResult("backup directory", FAIL, f"{backup_root} not writable"))

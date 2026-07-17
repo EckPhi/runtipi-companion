@@ -4,8 +4,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from ..config import CompanionConfig
 from ..backup.rclone import RcloneClient
+from ..config import CompanionConfig
 from ..system.runtipi_cli import RuntipiCLI, RuntipiCLIError
 from ..system.shell import confirm, run
 

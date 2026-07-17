@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Optional
 
 from rich.console import Console
 

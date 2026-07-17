@@ -10,9 +10,9 @@ from typing import Optional
 from rich.console import Console
 
 from ..config import CompanionConfig, RemoteConfig
+from ..system.runtipi_cli import RuntipiCLI
 from .rclone import RcloneClient
 from .retention import select_prunable
-from ..system.runtipi_cli import RuntipiCLI
 
 console = Console()
 
@@ -119,8 +119,7 @@ def run_backup(
         retention = cfg.backup.schedules[schedule].retention
     else:
         raise ValueError(
-            f"No retention configured for schedule '{schedule}'. "
-            f"Configured schedules: {list(cfg.backup.schedules)}"
+            f"No retention configured for schedule '{schedule}'. " f"Configured schedules: {list(cfg.backup.schedules)}"
         )
     stop = cfg.backup.stop_apps if stop_apps is None else stop_apps
 
@@ -222,7 +221,9 @@ def sync_to_remotes(
         if not dry_run:
             prune_remote(rclone, remote, schedule, remote_retention)
         else:
-            console.print(f"[yellow]DRY-RUN[/yellow] would prune remote '{remote.name}' to {remote_retention} {schedule} backups per app")
+            console.print(
+                f"[yellow]DRY-RUN[/yellow] would prune remote '{remote.name}' to {remote_retention} {schedule} backups per app"
+            )
 
 
 def prune_remote(rclone: RcloneClient, remote: RemoteConfig, schedule: str, retention: int) -> None:

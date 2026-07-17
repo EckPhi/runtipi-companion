@@ -26,6 +26,7 @@ from .schema import (
     UpdatesConfig,
 )
 
+
 def _schedules_from_dict(raw: Optional[dict]) -> dict:
     out = {}
     for name, val in (raw or {}).items():
@@ -68,8 +69,7 @@ def load_config(path: Optional[str] = None) -> CompanionConfig:
     if chosen is None:
         searched = ", ".join(str(p) for p in candidates)
         raise ConfigError(
-            f"No config file found. Searched: {searched}\n"
-            f"Run 'runtipi-companion config init' to create one."
+            f"No config file found. Searched: {searched}\n" f"Run 'runtipi-companion config init' to create one."
         )
     with open(chosen) as f:
         raw = yaml.safe_load(f) or {}

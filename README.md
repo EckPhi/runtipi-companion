@@ -75,6 +75,7 @@ Or, for local development:
 
 ```
 pip install -e ".[dev]"
+pre-commit install      # ruff lint + format on every commit
 pytest
 ```
 
@@ -116,7 +117,9 @@ $EDITOR ~/.config/runtipi-companion/config.yaml   # set runtipi.path, add rclone
 Then bootstrap the system and take a first backup:
 
 ```
-runtipi-companion setup wizard --apply
+runtipi-companion setup --apply                    # the setup wizard (same as 'setup wizard')
+runtipi-companion setup rclone --apply             # install rclone + configure remotes
+runtipi-companion setup services --apply           # systemd timers for automated backups
 
 runtipi-companion backup run --type daily --apply
 runtipi-companion backup list jellyfin
@@ -125,7 +128,7 @@ runtipi-companion security harden                  # interactive: pick what to h
 runtipi-companion security harden --all --apply    # or apply everything at once
 runtipi-companion security harden --tailscale-security --apply   # VPN-only lockdown only
 
-runtipi-companion tailscale install --apply
+runtipi-companion setup tailscale --apply
 ```
 
 ## Configuration
@@ -163,9 +166,9 @@ runtipi-companion config   wizard|init|show|validate
 runtipi-companion backup   run|list|remotes
 runtipi-companion restore  run|list
 runtipi-companion update   apps|core|appstores
-runtipi-companion setup    wizard
+runtipi-companion setup    wizard|services|rclone|fail2ban|tailscale   # bare 'setup' = wizard
 runtipi-companion security harden|status
-runtipi-companion tailscale install|status
+runtipi-companion tailscale status
 runtipi-companion doctor        # health audit: pass/warn/fail, changes nothing
 runtipi-companion self-update   # upgrade this tool from PyPI (pipx or pip)
 runtipi-companion version
@@ -206,9 +209,34 @@ sudo crontab -e
 0 3 1 * *   /usr/local/bin/runtipi-companion backup run --type monthly --apply
 ```
 
-Or the systemd timers in [`systemd/`](./systemd/), which add logging via
-`journalctl` and `Persistent=true` (a backup missed because the box was off
-runs as soon as it's back).
+Or the bundled systemd timers, which add logging via `journalctl` and
+`Persistent=true` (a backup missed because the box was off runs as soon as
+it's back):
+
+```
+runtipi-companion setup services --apply           # daily,weekly,monthly by default
+runtipi-companion setup services --schedules daily,weekly,monthly,yearly --apply
+```
+
+## Notifications
+
+Set `notify.urls` in the config to any number of
+[apprise](https://github.com/caronc/apprise) URLs -- ntfy, Discord, Slack,
+email, matrix, and ~80 other services:
+
+```yaml
+notify:
+  urls:
+    - ntfy://ntfy.sh/my-topic
+    - discord://webhook_id/webhook_token
+  notify_on_success: false   # failures always notify by default
+  notify_on_failure: true
+```
+
+Backup runs notify on failure (and optionally success) with proper
+success/failure message types -- ntfy users get priority/color out of the
+box. The old single `notify.webhook_url` (generic JSON POST) still works
+but is deprecated.
 
 ## Restore
 
@@ -245,10 +273,7 @@ Things worth considering if this becomes your daily driver:
   for centralized backup/update status across boxes. Provisioning many
   boxes is already covered by the ansible playbook in
   [`deploy/ansible/`](./deploy/ansible/); this would add day-2 status.
-- Richer notifications (ntfy priority levels, per-event webhook payloads)
-  beyond the current single generic webhook.
-
 Already graduated from this list: pre-update snapshots, backup integrity
-verification, `doctor`, and `self-update`.
+verification, `doctor`, `self-update`, and richer notifications (apprise).
 
 Happy to build any of these next -- say the word.

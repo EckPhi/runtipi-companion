@@ -17,7 +17,7 @@ dependencies = [
 runtipi-companion = "runtipi_companion.cli:app"
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0.0"]
+dev = ["pytest>=7.0.0", "ruff>=0.6.0", "pre-commit>=3.5.0"]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
@@ -34,3 +34,15 @@ local_scheme = "no-local-version"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/runtipi_companion"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+# Defaults (pyflakes + pycodestyle errors) plus import sorting, pyupgrade,
+# and bugbear.
+extend-select = ["I", "UP", "B"]
+# Keep typing.Optional: we support Python 3.9, and typer evaluates
+# annotations at runtime, where "X | None" doesn't exist before 3.10.
+ignore = ["UP007"]

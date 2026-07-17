@@ -107,9 +107,7 @@ class RuntipiCLI:
         return self._run(["app", "restore", app_ref, backup_filename])
 
     def app_list_backups(self, app_ref: str) -> list:
-        result = run(
-            [self.cli_path, "app", "list-backups", app_ref], sudo=True, dry_run=False, quiet=True, check=False
-        )
+        result = run([self.cli_path, "app", "list-backups", app_ref], sudo=True, dry_run=False, quiet=True, check=False)
         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
     def app_delete_backup(self, app_ref: str, backup_filename: str) -> RunResult:
@@ -138,8 +136,6 @@ class RuntipiCLI:
             # docker missing/unreachable -- don't crash the whole backup run
             # over a status check; assume stopped so we don't try to
             # start/stop something we can't see.
-            console.print(
-                f"[yellow]Could not query docker for {app_id}:{store} status, assuming stopped.[/yellow]"
-            )
+            console.print(f"[yellow]Could not query docker for {app_id}:{store} status, assuming stopped.[/yellow]")
             return False
         return bool(result.stdout.strip())

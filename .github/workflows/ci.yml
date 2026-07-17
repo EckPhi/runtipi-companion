@@ -60,6 +60,17 @@ jobs:
           runtipi-companion config init --path /tmp/config.yaml
           runtipi-companion config validate --config /tmp/config.yaml
 
+  lint:
+    name: Ruff lint + format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Run ruff
+        run: |
+          pipx run ruff==0.8.4 check .
+          pipx run ruff==0.8.4 format --check .
+
   ansible-lint:
     name: Lint ansible playbook
     runs-on: ubuntu-latest

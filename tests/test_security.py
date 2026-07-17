@@ -1,8 +1,8 @@
 import textwrap
 from pathlib import Path
 
-from runtipi_companion.security import hardening as security
 from runtipi_companion.config import load_config
+from runtipi_companion.security import hardening as security
 
 
 def write_config(tmp_path: Path, content: str) -> Path:

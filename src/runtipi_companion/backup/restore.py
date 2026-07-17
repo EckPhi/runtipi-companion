@@ -10,9 +10,9 @@ from typing import Optional
 from rich.console import Console
 
 from ..config import CompanionConfig
-from .rclone import RcloneClient
 from ..system.runtipi_cli import RuntipiCLI
 from ..system.shell import confirm, run
+from .rclone import RcloneClient
 
 console = Console()
 
@@ -27,8 +27,9 @@ def list_local_backups(cfg: CompanionConfig, app_id: str, store: Optional[str] =
 def list_remote_backups(cfg: CompanionConfig, remote_name: str, app_id: str) -> list:
     remote = cfg.backup.remote(remote_name)
     if not remote:
-        raise ValueError(f"Unknown remote '{remote_name}'. Configured remotes: "
-                          f"{[r.name for r in cfg.backup.remotes]}")
+        raise ValueError(
+            f"Unknown remote '{remote_name}'. Configured remotes: " f"{[r.name for r in cfg.backup.remotes]}"
+        )
     rclone = RcloneClient()
     all_files = rclone.list_files(remote.rclone_remote)
     return [f for f in all_files if Path(f).name.startswith(f"{app_id}-")]
@@ -73,8 +74,7 @@ def restore_backup(
             )
 
     console.print(
-        f"[bold red]This will overwrite the current app, app-data, and user-config "
-        f"for {app_id}:{store}.[/bold red]"
+        f"[bold red]This will overwrite the current app, app-data, and user-config " f"for {app_id}:{store}.[/bold red]"
     )
     if not confirm(f"Restore {app_id}:{store} from {Path(backup_file).name}?", assume_yes=dry_run or assume_yes):
         console.print("Aborted.")

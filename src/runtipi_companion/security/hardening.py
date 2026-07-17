@@ -129,7 +129,9 @@ def harden_ufw(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
         console.print("[yellow]DRY-RUN[/yellow] -- no changes made. Re-run with --apply to write these.")
         return
 
-    if not confirm("Apply these UFW rules? (SSH port(s) will be allowed first, so you shouldn't be locked out)", assume_yes):
+    if not confirm(
+        "Apply these UFW rules? (SSH port(s) will be allowed first, so you shouldn't be locked out)", assume_yes
+    ):
         console.print("Aborted.")
         return
 
@@ -186,9 +188,7 @@ def harden_tailscale_security(cfg: CompanionConfig, *, dry_run: bool = True, ass
 
     console.print("[bold]Tailscale-only access plan[/bold]")
     if shutil.which("tailscale") is None:
-        console.print(
-            "[red]tailscale binary not found.[/red] Run 'runtipi-companion tailscale install --apply' first."
-        )
+        console.print("[red]tailscale binary not found.[/red] Run 'runtipi-companion tailscale install --apply' first.")
         return
 
     if ts_cfg.tailscale_ssh:
@@ -244,7 +244,11 @@ def harden_tailscale_security(cfg: CompanionConfig, *, dry_run: bool = True, ass
 def status(cfg: CompanionConfig) -> None:
     console.print("[bold]Security status[/bold]")
     console.print("\n[bold]sshd effective config (password/root login):[/bold]")
-    run(["sh", "-c", "sshd -T 2>/dev/null | grep -E 'passwordauthentication|permitrootlogin|^port'"], sudo=True, check=False)
+    run(
+        ["sh", "-c", "sshd -T 2>/dev/null | grep -E 'passwordauthentication|permitrootlogin|^port'"],
+        sudo=True,
+        check=False,
+    )
     console.print("\n[bold]UFW:[/bold]")
     run(["ufw", "status", "verbose"], sudo=True, check=False)
     console.print("\n[bold]fail2ban:[/bold]")

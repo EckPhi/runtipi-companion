@@ -78,11 +78,15 @@ def _prompt_remote_details(taken_names: set, current: Optional[dict] = None) -> 
     if not name or name in taken_names:
         console.print("  [red]Name must be non-empty and unique.[/red]")
         return None
-    rclone_remote = _ask('  rclone target (e.g. "b2-runtipi:my-bucket/runtipi-backups")', default=cur.get("rclone_remote"))
+    rclone_remote = _ask(
+        '  rclone target (e.g. "b2-runtipi:my-bucket/runtipi-backups")', default=cur.get("rclone_remote")
+    )
     if not rclone_remote:
         console.print("  [red]rclone target is required, skipping this remote.[/red]")
         return None
-    bandwidth = _or_none(_ask('  Upload bandwidth limit (e.g. "5M", empty for none)', default=cur.get("bandwidth_limit") or ""))
+    bandwidth = _or_none(
+        _ask('  Upload bandwidth limit (e.g. "5M", empty for none)', default=cur.get("bandwidth_limit") or "")
+    )
     if cur.get("schedules"):
         sched_defaults = {n: (v or {}).get("retention", 3) for n, v in cur["schedules"].items()}
     else:
@@ -274,9 +278,7 @@ def manage_remotes(path: Optional[str] = None) -> bool:
     """
     chosen = find_config_file(path)
     if chosen is None:
-        console.print(
-            "[red]No config file found.[/red] Run [bold]runtipi-companion config wizard[/bold] first."
-        )
+        console.print("[red]No config file found.[/red] Run [bold]runtipi-companion config wizard[/bold] first.")
         return False
 
     original_text = chosen.read_text()
@@ -290,7 +292,11 @@ def manage_remotes(path: Optional[str] = None) -> bool:
     dirty = False
     while True:
         console.print(_remotes_table(remotes))
-        action = _ask("Action: [a]dd / [e]dit / [r]emove / [t]oggle enabled / [s]ave & exit / [q]uit", default="s").strip().lower()
+        action = (
+            _ask("Action: [a]dd / [e]dit / [r]emove / [t]oggle enabled / [s]ave & exit / [q]uit", default="s")
+            .strip()
+            .lower()
+        )
 
         if action == "a":
             remote = _prompt_remote_details({r["name"] for r in remotes})
@@ -307,7 +313,9 @@ def manage_remotes(path: Optional[str] = None) -> bool:
                     dirty = True
         elif action == "r":
             idx = _pick_remote(remotes)
-            if idx is not None and _ask_bool(f"Remove remote '{remotes[idx]['name']}'? (already-synced backups stay on the remote)", default=False):
+            if idx is not None and _ask_bool(
+                f"Remove remote '{remotes[idx]['name']}'? (already-synced backups stay on the remote)", default=False
+            ):
                 remotes.pop(idx)
                 dirty = True
         elif action == "t":
