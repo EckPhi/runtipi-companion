@@ -1,0 +1,10 @@
+[Unit]
+Description=Yearly Runtipi Companion backup
+
+[Timer]
+OnCalendar=*-01-01 04:00:00
+Persistent=true
+Unit=runtipi-companion-backup@yearly.service
+
+[Install]
+WantedBy=timers.target

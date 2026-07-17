@@ -57,8 +57,8 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
         if not rclone.is_installed():
             console.print(
                 "[yellow]rclone is not installed but remotes are configured. "
-                "Install it from https://rclone.org/install/ and run "
-                "'rclone config' to set up each remote before your first backup.[/yellow]"
+                "Run 'runtipi-companion setup rclone' to install and configure "
+                "it before your first backup.[/yellow]"
             )
         else:
             configured = set(rclone.list_remotes())
@@ -71,7 +71,8 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
                     )
 
     console.print("\n[green]Base setup complete.[/green] Suggested next steps:\n")
+    console.print("  runtipi-companion setup rclone               (install/configure backup remotes)")
     console.print("  runtipi-companion security harden --all      (defaults to a dry-run preview)")
-    console.print("  runtipi-companion tailscale install")
-    console.print("  runtipi-companion backup run --type daily --apply")
-    console.print("  Install the systemd timers in systemd/ (or cron) to automate backups.\n")
+    console.print("  runtipi-companion setup tailscale")
+    console.print("  runtipi-companion setup services --apply     (systemd timers for automated backups)")
+    console.print("  runtipi-companion backup run --type daily --apply\n")

@@ -117,37 +117,9 @@
       when: companion_tailscale_security
       changed_when: true
 
-    - name: Install backup service unit
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../../systemd/runtipi-companion-backup@.service"
-        dest: /etc/systemd/system/runtipi-companion-backup@.service
-        owner: root
-        group: root
-        mode: "0644"
+    - name: Install and enable backup systemd timers
+      ansible.builtin.command: >-
+        {{ companion_bin }} setup services
+        --schedules {{ companion_timers | join(',') }} --yes --apply
       when: companion_install_timers
-      notify: Reload systemd
-
-    - name: Install backup timer units
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../../systemd/runtipi-companion-backup-{{ item }}.timer"
-        dest: "/etc/systemd/system/runtipi-companion-backup-{{ item }}.timer"
-        owner: root
-        group: root
-        mode: "0644"
-      loop: "{{ companion_timers }}"
-      when: companion_install_timers
-      notify: Reload systemd
-
-    - name: Enable backup timers
-      ansible.builtin.systemd:
-        name: "runtipi-companion-backup-{{ item }}.timer"
-        enabled: true
-        state: started
-        daemon_reload: true
-      loop: "{{ companion_timers }}"
-      when: companion_install_timers
-
-  handlers:
-    - name: Reload systemd
-      ansible.builtin.systemd:
-        daemon_reload: true
+      changed_when: true

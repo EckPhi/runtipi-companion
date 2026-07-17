@@ -15,6 +15,8 @@ from .ui import config_wizard
 from . import doctor as doctor_mod
 from .backup import restore as restore_mod
 from . import security as security_mod
+from .setup import rclone as rclone_setup
+from .setup import services as services_mod
 from .setup import wizard as setup_wizard
 from .security import tailscale as tailscale_mod
 from .ui import tui
@@ -39,7 +41,9 @@ restore_app = typer.Typer(help="Restore apps from a backup.", no_args_is_help=Tr
 update_app = typer.Typer(help="Update apps, app stores, or Runtipi core.", no_args_is_help=True)
 security_app = typer.Typer(help="VPS/server hardening (SSH, UFW, fail2ban).", no_args_is_help=True)
 tailscale_app = typer.Typer(help="Install and configure Tailscale.", no_args_is_help=True)
-setup_app = typer.Typer(help="First-run setup wizard.", no_args_is_help=True)
+setup_app = typer.Typer(
+    help="Guided setup: wizard (default), systemd services, rclone, fail2ban, tailscale."
+)
 
 app.add_typer(config_app, name="config")
 app.add_typer(backup_app, name="backup")
@@ -316,8 +320,10 @@ def security_status(config: Optional[str] = ConfigOption):
 # ---- tailscale ----
 
 
-@tailscale_app.command("install")
+@tailscale_app.command("install", hidden=True)
 def tailscale_install(config: Optional[str] = ConfigOption, yes: bool = YesOption, dry_run: bool = DryRunOption):
+    """Deprecated alias for 'setup tailscale'."""
+    console.print("[yellow]'tailscale install' is deprecated; use 'setup tailscale' instead.[/yellow]")
     cfg = _load(config)
     tailscale_mod.install_tailscale(cfg, dry_run=dry_run, assume_yes=yes)
 
@@ -330,10 +336,71 @@ def tailscale_status():
 # ---- setup ----
 
 
-@setup_app.command("wizard")
-def setup_wizard_cmd(config: Optional[str] = ConfigOption, yes: bool = YesOption, dry_run: bool = DryRunOption):
+@setup_app.callback(invoke_without_command=True)
+def setup_default(
+    ctx: typer.Context,
+    config: Optional[str] = ConfigOption,
+    yes: bool = YesOption,
+    dry_run: bool = DryRunOption,
+):
+    """With no subcommand, runs the setup wizard."""
+    if ctx.invoked_subcommand is not None:
+        return
     cfg = _load(config)
     setup_wizard.run_wizard(cfg, dry_run=dry_run, assume_yes=yes)
+
+
+@setup_app.command("wizard")
+def setup_wizard_cmd(config: Optional[str] = ConfigOption, yes: bool = YesOption, dry_run: bool = DryRunOption):
+    """Guided first-run: clone/verify the runtipi install, locate
+    runtipi-cli, prepare/start, create backup dirs, sanity-check rclone."""
+    cfg = _load(config)
+    setup_wizard.run_wizard(cfg, dry_run=dry_run, assume_yes=yes)
+
+
+@setup_app.command("services")
+def setup_services_cmd(
+    schedules: str = typer.Option(
+        ",".join(services_mod.DEFAULT_SCHEDULES),
+        "--schedules",
+        help="Comma-separated: daily,weekly,monthly,yearly.",
+    ),
+    yes: bool = YesOption,
+    dry_run: bool = DryRunOption,
+):
+    """Install and enable the bundled systemd backup timers (the packaged
+    alternative to setting up cron by hand)."""
+    try:
+        services_mod.install_services(
+            [s.strip() for s in schedules.split(",") if s.strip()], dry_run=dry_run, assume_yes=yes
+        )
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+
+@setup_app.command("rclone")
+def setup_rclone_cmd(config: Optional[str] = ConfigOption, yes: bool = YesOption, dry_run: bool = DryRunOption):
+    """Install rclone and walk through configuring the remotes your config
+    references ('rclone config' itself stays interactive)."""
+    cfg = _load(config)
+    rclone_setup.setup_rclone(cfg, dry_run=dry_run, assume_yes=yes)
+
+
+@setup_app.command("fail2ban")
+def setup_fail2ban_cmd(config: Optional[str] = ConfigOption, yes: bool = YesOption, dry_run: bool = DryRunOption):
+    """Install and configure fail2ban for sshd (same as
+    'security harden --fail2ban')."""
+    cfg = _load(config)
+    security_mod.harden_fail2ban(cfg, dry_run=dry_run, assume_yes=yes)
+
+
+@setup_app.command("tailscale")
+def setup_tailscale_cmd(config: Optional[str] = ConfigOption, yes: bool = YesOption, dry_run: bool = DryRunOption):
+    """Install tailscale and bring it up (auth key read from the env var
+    named by tailscale.auth_key_env)."""
+    cfg = _load(config)
+    tailscale_mod.install_tailscale(cfg, dry_run=dry_run, assume_yes=yes)
 
 
 @app.command("doctor")

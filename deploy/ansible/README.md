@@ -40,7 +40,7 @@ ansible-playbook -i inventory.yml install.yml \
 | `companion_harden_flags` | `--ssh --ufw --fail2ban` | Which hardening steps to apply. |
 | `companion_tailscale_install` | `false` | Run `tailscale install --yes --apply`. |
 | `companion_tailscale_security` | `false` | **Danger, read below.** Run `security harden --tailscale-security`. |
-| `companion_install_timers` | `true` | Install + enable the systemd backup timers from `../../systemd/`. |
+| `companion_install_timers` | `true` | Run `setup services` to install + enable the bundled systemd backup timers. |
 | `companion_timers` | daily, weekly, monthly | Which timers to enable. |
 
 ## Tailscale lockdown ordering (read before enabling)
