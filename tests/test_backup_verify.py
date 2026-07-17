@@ -127,3 +127,17 @@ def test_run_backup_continues_past_failing_app(tmp_path, monkeypatch):
     assert len(healthy) == 1, "healthy app should still have been backed up"
     broken = list((tmp_path / "backups" / "migrated" / "broken").glob("*.tar.gz"))
     assert broken == [], "broken app must not produce an archive after its stop failed"
+
+
+def test_sync_only_copies_current_schedule(monkeypatch):
+    """The remote sync must be filtered to the schedule being synced --
+    other schedules' archives and local-only pre-update snapshots must not
+    ride along (they'd never be pruned on that remote)."""
+    from runtipi_companion.backup import rclone as rclone_mod
+
+    calls = []
+    monkeypatch.setattr(rclone_mod, "run", lambda cmd, **k: calls.append(cmd))
+    rclone_mod.RcloneClient().sync_dir("/backups", "proton:bucket/host", include="*-daily-*.tar.gz")
+    (cmd,) = calls
+    i = cmd.index("--include")
+    assert cmd[i + 1] == "*-daily-*.tar.gz"

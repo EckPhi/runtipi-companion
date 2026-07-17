@@ -86,6 +86,8 @@ say "Seed two old archives to prove retention pruning"
 mkdir -p "$BACKUP_DIR/migrated/e2etest"
 tar -czf "$BACKUP_DIR/migrated/e2etest/e2etest-daily-2020-01-01.tar.gz" -T /dev/null
 tar -czf "$BACKUP_DIR/migrated/e2etest/e2etest-daily-2020-01-02.tar.gz" -T /dev/null
+# The remote only lists 'daily' -- this weekly archive must never reach it.
+tar -czf "$BACKUP_DIR/migrated/e2etest/e2etest-weekly-2020-01-01.tar.gz" -T /dev/null
 
 say "Backup: dry-run preview, then apply"
 "${RC[@]}" backup run --type daily --config "$CFG"
@@ -96,17 +98,25 @@ ARCHIVE="e2etest-daily-$TODAY.tar.gz"
 test -f "$BACKUP_DIR/migrated/e2etest/$ARCHIVE" || fail "local archive was not created"
 test ! -f "$BACKUP_DIR/migrated/e2etest/e2etest-daily-2020-01-01.tar.gz" \
   || fail "local retention (2) did not prune the oldest archive"
-[ "$(find "$BACKUP_DIR" -name '*.tar.gz' | wc -l)" -eq 2 ] || fail "expected exactly 2 local archives"
+[ "$(find "$BACKUP_DIR" -name '*.tar.gz' | wc -l)" -eq 3 ] \
+  || fail "expected exactly 3 local archives (2 daily after pruning + 1 seeded weekly)"
 
 say "Verify remote sync + remote-specific retention (1)"
 test -f "$REMOTE_DIR/e2ehost/migrated/e2etest/$ARCHIVE" || fail "archive was not synced to the rclone remote"
 [ "$(find "$REMOTE_DIR" -name '*.tar.gz' | wc -l)" -eq 1 ] \
   || fail "remote retention (1) should leave exactly 1 archive on the remote"
+[ -z "$(find "$REMOTE_DIR" -name '*weekly*')" ] \
+  || fail "weekly archive leaked to a remote that only lists the daily schedule"
 
 say "backup list (local + remote + latest-per-app summary)"
-"${RC[@]}" backup list e2etest --config "$CFG" | grep -q "$ARCHIVE" || fail "'backup list' missing local archive"
-"${RC[@]}" backup list e2etest --remote cloud --config "$CFG" | grep -q "$ARCHIVE" || fail "'backup list --remote' missing archive"
-"${RC[@]}" backup list --config "$CFG" | grep -q "e2etest" || fail "'backup list' without app did not list the app"
+# Capture first, grep after: with pipefail, `cmd | grep -q` can fail even on
+# a match (grep exits at first hit -> cmd dies of SIGPIPE mid-write).
+OUT=$("${RC[@]}" backup list e2etest --config "$CFG")
+echo "$OUT" | grep -q "$ARCHIVE" || fail "'backup list' missing local archive"
+OUT=$("${RC[@]}" backup list e2etest --remote cloud --config "$CFG")
+echo "$OUT" | grep -q "$ARCHIVE" || fail "'backup list --remote' missing archive"
+OUT=$("${RC[@]}" backup list --config "$CFG")
+echo "$OUT" | grep -q "e2etest" || fail "'backup list' without app did not list the app"
 
 say "Restore from local backup"
 echo "corrupted" > "$RUNTIPI_DIR/app-data/migrated/e2etest/data.txt"

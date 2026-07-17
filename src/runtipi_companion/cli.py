@@ -209,7 +209,9 @@ def backup_list(
             _print_known_hosts(cfg, remote)
             return
         for store, app_id, newest in latest:
-            console.print(f"{app_id}  [dim](store: {store}, latest: {newest})[/dim]")
+            # soft_wrap: listing output is consumed by scripts/grep -- rich
+            # must not hard-wrap long paths at the terminal width.
+            console.print(f"{app_id}  [dim](store: {store}, latest: {newest})[/dim]", soft_wrap=True)
         return
 
     if remote:
@@ -220,7 +222,7 @@ def backup_list(
         console.print("No backups found.")
         _print_known_hosts(cfg, remote)
     for f in files:
-        console.print(f)
+        console.print(f, soft_wrap=True)
 
 
 def _print_known_hosts(cfg: CompanionConfig, remote: Optional[str]) -> None:

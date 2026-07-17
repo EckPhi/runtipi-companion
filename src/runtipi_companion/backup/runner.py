@@ -260,6 +260,10 @@ def sync_to_remotes(
         rclone.sync_dir(
             local_backup_root,
             remote_host_root,
+            # Only this schedule's archives: a remote must receive exactly the
+            # schedules it lists, and local-only pre-update snapshots (or other
+            # schedules this remote never prunes) must not leak onto it.
+            include=f"*-{schedule}-*.tar.gz",
             bandwidth_limit=remote.bandwidth_limit,
             extra_flags=remote.extra_rclone_flags,
         )

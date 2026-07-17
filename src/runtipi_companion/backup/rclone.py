@@ -23,10 +23,13 @@ class RcloneClient:
         local_dir: Path,
         remote: str,
         *,
+        include: Optional[str] = None,
         bandwidth_limit: Optional[str] = None,
         extra_flags: Optional[list] = None,
     ):
         cmd = ["rclone", "copy", str(local_dir), remote, "--create-empty-src-dirs"]
+        if include:
+            cmd += ["--include", include]
         if bandwidth_limit:
             cmd += ["--bwlimit", bandwidth_limit]
         if extra_flags:
