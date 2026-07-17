@@ -9,6 +9,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
+from . import __version__
 from . import backup as backup_mod
 from . import config_wizard
 from . import restore as restore_mod
@@ -17,6 +18,7 @@ from . import setup_wizard
 from . import tailscale as tailscale_mod
 from . import tui
 from . import update as update_mod
+from . import version_check
 from .config import DEFAULT_CONFIG_PATHS, CompanionConfig, ConfigError, load_config
 from .notify import notify
 from .templates import EXAMPLE_CONFIG
@@ -47,6 +49,12 @@ app.add_typer(setup_app, name="setup")
 
 
 def _load(config_path: Optional[str]) -> CompanionConfig:
+    latest = version_check.check_for_update()
+    if latest:
+        console.print(
+            f"[yellow]A new runtipi-companion version is available: {latest} "
+            f"(installed: {__version__}). Run 'pip install --upgrade runtipi-companion'.[/yellow]"
+        )
     try:
         return load_config(config_path)
     except ConfigError as e:
@@ -317,6 +325,17 @@ def tailscale_status():
 def setup_wizard_cmd(config: Optional[str] = ConfigOption, yes: bool = YesOption, dry_run: bool = DryRunOption):
     cfg = _load(config)
     setup_wizard.run_wizard(cfg, dry_run=dry_run, assume_yes=yes)
+
+
+@app.command("version")
+def version_cmd():
+    """Print the installed version and check PyPI for a newer release."""
+    console.print(f"runtipi-companion {__version__}")
+    latest = version_check.check_for_update(force=True)
+    if latest:
+        console.print(f"[yellow]A newer version is available: {latest}[/yellow]")
+    else:
+        console.print("[green]Up to date.[/green]")
 
 
 if __name__ == "__main__":
