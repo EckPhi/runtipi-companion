@@ -7,8 +7,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from .config import CompanionConfig
-from .shell import confirm, run
+from ..config import CompanionConfig
+from ..system.shell import confirm, run
 
 console = Console()
 

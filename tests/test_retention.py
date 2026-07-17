@@ -1,4 +1,4 @@
-from runtipi_companion.retention import parse_backup_filename, select_prunable
+from runtipi_companion.backup.retention import parse_backup_filename, select_prunable
 
 
 def test_parse_backup_filename():

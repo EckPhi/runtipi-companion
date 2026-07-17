@@ -1,9 +1,9 @@
 import textwrap
 from pathlib import Path
 
-from runtipi_companion import config_wizard, tui
+from runtipi_companion.ui import config_wizard, tui
 from runtipi_companion.config import load_config
-from runtipi_companion.rclone import RcloneClient
+from runtipi_companion.backup.rclone import RcloneClient
 
 from .test_config_wizard import ScriptedPrompts
 

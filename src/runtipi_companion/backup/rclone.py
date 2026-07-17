@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from .shell import run
+from ..system.shell import run
 
 
 class RcloneClient:

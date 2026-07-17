@@ -9,10 +9,10 @@ from typing import Optional
 
 from rich.console import Console
 
-from .config import CompanionConfig
+from ..config import CompanionConfig
 from .rclone import RcloneClient
-from .runtipi_cli import RuntipiCLI
-from .shell import confirm, run
+from ..system.runtipi_cli import RuntipiCLI
+from ..system.shell import confirm, run
 
 console = Console()
 

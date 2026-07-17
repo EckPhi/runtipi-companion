@@ -11,19 +11,19 @@ from rich.console import Console
 
 from . import __version__
 from . import backup as backup_mod
-from . import config_wizard
+from .ui import config_wizard
 from . import doctor as doctor_mod
-from . import restore as restore_mod
+from .backup import restore as restore_mod
 from . import security as security_mod
-from . import setup_wizard
-from . import tailscale as tailscale_mod
-from . import tui
+from .setup import wizard as setup_wizard
+from .security import tailscale as tailscale_mod
+from .ui import tui
 from . import update as update_mod
-from . import version_check
+from .system import version_check
 from .config import DEFAULT_CONFIG_PATHS, CompanionConfig, ConfigError, load_config
-from .notify import notify
-from .shell import run as shell_run
-from .templates import EXAMPLE_CONFIG
+from .system.notify import notify
+from .system.shell import run as shell_run
+from .config.templates import EXAMPLE_CONFIG
 
 console = Console()
 

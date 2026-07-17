@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from runtipi_companion import config_wizard
+from runtipi_companion.ui import config_wizard
 from runtipi_companion.config import ConfigError, load_config
 
 

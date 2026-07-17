@@ -1,6 +1,6 @@
 import json
 
-import runtipi_companion.version_check as vc
+import runtipi_companion.system.version_check as vc
 
 
 def test_parse_version_plain():

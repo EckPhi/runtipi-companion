@@ -4,10 +4,10 @@ from pathlib import Path
 
 from rich.console import Console
 
-from .config import CompanionConfig
-from .rclone import RcloneClient
-from .runtipi_cli import RuntipiCLI, RuntipiCLIError
-from .shell import confirm, run
+from ..config import CompanionConfig
+from ..backup.rclone import RcloneClient
+from ..system.runtipi_cli import RuntipiCLI, RuntipiCLIError
+from ..system.shell import confirm, run
 
 console = Console()
 

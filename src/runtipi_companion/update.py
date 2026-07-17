@@ -6,7 +6,7 @@ from rich.console import Console
 
 from .backup import discover_apps, run_backup
 from .config import CompanionConfig
-from .runtipi_cli import RuntipiCLI
+from .system.runtipi_cli import RuntipiCLI
 
 console = Console()
 

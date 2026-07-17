@@ -15,8 +15,8 @@ from typing import Optional
 from rich.console import Console
 
 from . import config_wizard as cw
-from .config import CompanionConfig
-from .rclone import RcloneClient
+from ..config import CompanionConfig
+from ..backup.rclone import RcloneClient
 
 console = Console()
 

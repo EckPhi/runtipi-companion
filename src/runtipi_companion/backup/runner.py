@@ -9,10 +9,10 @@ from typing import Optional
 
 from rich.console import Console
 
-from .config import CompanionConfig, RemoteConfig
+from ..config import CompanionConfig, RemoteConfig
 from .rclone import RcloneClient
 from .retention import select_prunable
-from .runtipi_cli import RuntipiCLI
+from ..system.runtipi_cli import RuntipiCLI
 
 console = Console()
 

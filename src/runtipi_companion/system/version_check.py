@@ -6,7 +6,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-from . import __version__
+from .. import __version__
 
 PYPI_URL = "https://pypi.org/pypi/runtipi-companion/json"
 CACHE_PATH = Path.home() / ".cache" / "runtipi-companion" / "update_check.json"

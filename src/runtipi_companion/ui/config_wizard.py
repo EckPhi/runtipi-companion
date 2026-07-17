@@ -19,7 +19,7 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.syntax import Syntax
 from rich.table import Table
 
-from .config import DEFAULT_CONFIG_PATHS, VALID_SCHEDULES, ConfigError, load_config
+from ..config import DEFAULT_CONFIG_PATHS, VALID_SCHEDULES, ConfigError, load_config
 
 console = Console()
 

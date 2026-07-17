@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import urllib.request
 
-from .config import NotifyConfig
+from ..config import NotifyConfig
 
 
 def notify(cfg: NotifyConfig, message: str, *, success: bool = True) -> None:

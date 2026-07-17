@@ -17,11 +17,12 @@ from typing import Optional
 from rich.console import Console
 from rich.table import Table
 
-from . import __version__, version_check
+from . import __version__
+from .system import version_check
 from .config import CompanionConfig
-from .rclone import RcloneClient
-from .runtipi_cli import RuntipiCLI, RuntipiCLIError
-from .shell import run
+from .backup.rclone import RcloneClient
+from .system.runtipi_cli import RuntipiCLI, RuntipiCLIError
+from .system.shell import run
 
 console = Console()
 

@@ -3,7 +3,7 @@ import tarfile
 import pytest
 
 from runtipi_companion.backup import BackupVerificationError, verify_archive
-from runtipi_companion.retention import parse_backup_filename, select_prunable
+from runtipi_companion.backup.retention import parse_backup_filename, select_prunable
 
 
 def _make_archive(path, content=b"x" * 4096):
