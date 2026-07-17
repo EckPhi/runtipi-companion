@@ -53,6 +53,14 @@ broken, so you can't lock yourself out of a remote box.
 
 ## Install
 
+From [PyPI](https://pypi.org/project/runtipi-companion/):
+
+```
+pipx install runtipi-companion
+```
+
+(Or without pipx:)
+
 ```
 python3 -m venv /opt/runtipi-companion-venv
 /opt/runtipi-companion-venv/bin/pip install /path/to/runtipi-companion
@@ -79,6 +87,10 @@ Requires `rclone` on `$PATH` for remote backups, and `tailscale`'s installer
 handles its own binary. `runtipi-cli` does not need to be on `$PATH` --
 runtipi-companion looks for it at `<runtipi.path>/runtipi-cli` automatically
 (set `runtipi.cli_path` in the config if yours lives elsewhere).
+
+Managing several boxes (or provisioning unattended)? There's a thin Ansible
+playbook in [`deploy/ansible/`](./deploy/ansible/) that installs the package,
+uploads a config, and runs the setup/hardening steps non-interactively.
 
 ## Quickstart
 

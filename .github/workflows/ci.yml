@@ -58,6 +58,22 @@ jobs:
           runtipi-companion config init --path /tmp/config.yaml
           runtipi-companion config validate --config /tmp/config.yaml
 
+  ansible-lint:
+    name: Lint ansible playbook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run ansible-lint and syntax check
+        run: |
+          pip install ansible-lint ansible-core
+          ansible-lint deploy/ansible/install.yml
+          ansible-playbook --syntax-check -i deploy/ansible/inventory.example.yml deploy/ansible/install.yml
+
   build:
     name: Build distribution
     runs-on: ubuntu-latest

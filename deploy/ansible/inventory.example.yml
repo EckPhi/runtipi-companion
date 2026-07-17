@@ -1,0 +1,6 @@
+# Copy to inventory.yml and adjust.
+runtipi:
+  hosts:
+    my-runtipi-box:
+      ansible_host: 203.0.113.10   # or the tailscale IP, see README
+      ansible_user: root

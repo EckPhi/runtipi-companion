@@ -1,0 +1,153 @@
+# Thin installer playbook for runtipi-companion.
+#
+# Deliberately contains no hardening or backup logic of its own: every
+# system-changing step shells out to `runtipi-companion` itself, so the
+# safety checks built into the CLI (sshd_config validation, the
+# authorized_keys lockout guard, --dry-run semantics) always apply and
+# there is only one implementation to maintain. See README.md in this
+# directory for variables and the tailscale lockout warning.
+---
+- name: Install and configure runtipi-companion
+  hosts: runtipi
+  become: true
+
+  vars:
+    companion_bin: /usr/local/bin/runtipi-companion
+    companion_config_path: /etc/runtipi-companion/config.yaml
+    # Local (control machine) config file to upload. If unset, an example
+    # config is generated on the target via `config init` and you edit it
+    # there.
+    companion_config_src: ""
+    companion_upgrade: false
+    companion_run_setup: true
+    companion_harden: false
+    # Flags passed to `security harden`. --tailscale-security is on purpose
+    # not accepted here; use companion_tailscale_security below so the
+    # lockout ordering is explicit.
+    companion_harden_flags: "--ssh --ufw --fail2ban"
+    companion_tailscale_install: false
+    # DANGER: locks the box down to the tailscale0 interface. Only enable
+    # when ansible already connects over the tailscale IP, otherwise this
+    # playbook cuts off its own SSH connection. See README.md.
+    companion_tailscale_security: false
+    companion_install_timers: true
+    companion_timers:
+      - daily
+      - weekly
+      - monthly
+
+  tasks:
+    - name: Install system packages (pipx, rclone, git)
+      ansible.builtin.apt:
+        name:
+          - pipx
+          - rclone
+          - git
+        state: present
+        update_cache: true
+
+    # PIPX_BIN_DIR must be /usr/local/bin: the systemd units and the cron
+    # examples in the top-level README both hardcode that path.
+    - name: Install runtipi-companion via pipx
+      ansible.builtin.command: pipx install runtipi-companion
+      environment:
+        PIPX_HOME: /opt/pipx
+        PIPX_BIN_DIR: /usr/local/bin
+      args:
+        creates: "{{ companion_bin }}"
+
+    - name: Upgrade runtipi-companion
+      ansible.builtin.command: pipx upgrade runtipi-companion
+      environment:
+        PIPX_HOME: /opt/pipx
+        PIPX_BIN_DIR: /usr/local/bin
+      register: companion_upgrade_result
+      changed_when: "'upgraded' in companion_upgrade_result.stdout"
+      failed_when:
+        - companion_upgrade_result.rc != 0
+        - "'already at latest version' not in companion_upgrade_result.stdout"
+      when: companion_upgrade
+
+    - name: Upload companion config
+      ansible.builtin.copy:
+        src: "{{ companion_config_src }}"
+        dest: "{{ companion_config_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: companion_config_src | length > 0
+
+    - name: Generate example config (no companion_config_src given)
+      ansible.builtin.command: >-
+        {{ companion_bin }} config init --path {{ companion_config_path }}
+      args:
+        creates: "{{ companion_config_path }}"
+      when: companion_config_src | length == 0
+
+    - name: Validate config
+      ansible.builtin.command: >-
+        {{ companion_bin }} config validate --config {{ companion_config_path }}
+      changed_when: false
+
+    - name: Run setup wizard (non-interactive)
+      ansible.builtin.command: >-
+        {{ companion_bin }} setup wizard
+        --config {{ companion_config_path }} --yes --apply
+      when: companion_run_setup
+      changed_when: true
+
+    - name: Install tailscale
+      ansible.builtin.command: >-
+        {{ companion_bin }} tailscale install
+        --config {{ companion_config_path }} --yes --apply
+      when: companion_tailscale_install
+      changed_when: true
+
+    - name: Apply security hardening
+      ansible.builtin.command: >-
+        {{ companion_bin }} security harden {{ companion_harden_flags }}
+        --config {{ companion_config_path }} --yes --apply
+      when: companion_harden
+      changed_when: true
+
+    - name: Apply tailscale-only lockdown (see README warning)
+      ansible.builtin.command: >-
+        {{ companion_bin }} security harden --tailscale-security
+        --config {{ companion_config_path }} --yes --apply
+      when: companion_tailscale_security
+      changed_when: true
+
+    - name: Install backup service unit
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../systemd/runtipi-companion-backup@.service"
+        dest: /etc/systemd/system/runtipi-companion-backup@.service
+        owner: root
+        group: root
+        mode: "0644"
+      when: companion_install_timers
+      notify: Reload systemd
+
+    - name: Install backup timer units
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../systemd/runtipi-companion-backup-{{ item }}.timer"
+        dest: "/etc/systemd/system/runtipi-companion-backup-{{ item }}.timer"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ companion_timers }}"
+      when: companion_install_timers
+      notify: Reload systemd
+
+    - name: Enable backup timers
+      ansible.builtin.systemd:
+        name: "runtipi-companion-backup-{{ item }}.timer"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop: "{{ companion_timers }}"
+      when: companion_install_timers
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
