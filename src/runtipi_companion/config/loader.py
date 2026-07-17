@@ -145,6 +145,7 @@ def load_config(path: Optional[str] = None) -> CompanionConfig:
     if "notify" in raw:
         n = raw["notify"] or {}
         cfg.notify = NotifyConfig(
+            urls=n.get("urls", []),
             webhook_url=n.get("webhook_url"),
             notify_on_success=n.get("notify_on_success", False),
             notify_on_failure=n.get("notify_on_failure", True),

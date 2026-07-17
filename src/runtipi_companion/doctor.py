@@ -228,6 +228,24 @@ def _check_security(cfg: CompanionConfig) -> list:
     return results
 
 
+def _check_notify(cfg: CompanionConfig) -> list:
+    if not cfg.notify.urls:
+        return []
+    import apprise
+
+    results = []
+    for url in cfg.notify.urls:
+        valid = apprise.Apprise().add(url)
+        results.append(
+            CheckResult(
+                "notify URL parses",
+                OK if valid else FAIL,
+                url if valid else f"apprise rejected: {url}",
+            )
+        )
+    return results
+
+
 def _check_version() -> list:
     latest = version_check.check_for_update(force=True)
     if latest:
@@ -241,6 +259,7 @@ def run_doctor(cfg: CompanionConfig) -> list:
     results.extend(_check_backups(cfg))
     results.extend(_check_remotes(cfg))
     results.extend(_check_security(cfg))
+    results.extend(_check_notify(cfg))
     results.extend(_check_version())
     return results
 

@@ -89,6 +89,14 @@ updates:
   backup_before: true
 
 notify:
-  webhook_url: null   # e.g. a Discord/Slack/ntfy webhook URL
+  # Apprise URLs (https://github.com/caronc/apprise) -- any number, each one
+  # receives every notification. Examples:
+  #   - ntfy://ntfy.sh/my-topic
+  #   - discord://webhook_id/webhook_token
+  #   - mailto://user:app-password@gmail.com
+  urls: []
+  # Deprecated: single generic JSON-POST webhook, kept for backward
+  # compatibility. Prefer urls above.
+  webhook_url: null
   notify_on_success: false
   notify_on_failure: true

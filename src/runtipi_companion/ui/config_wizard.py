@@ -188,10 +188,14 @@ def gather_answers() -> dict:
     }
 
     console.print("\n[bold]Notifications[/bold]")
-    webhook = _or_none(_ask("Webhook URL for notifications (Discord/Slack/ntfy, empty = none)", default=""))
+    console.print(
+        "Notifications use apprise URLs (https://github.com/caronc/apprise), e.g.\n"
+        "  ntfy://ntfy.sh/my-topic   discord://webhook_id/webhook_token   mailto://user:pass@gmail.com"
+    )
+    urls = _csv_list(_ask("Apprise notification URLs, comma-separated (empty = none)", default=""))
     notify = {
-        "webhook_url": webhook,
-        "notify_on_success": bool(webhook) and _ask_bool("Notify on successful backups too?", default=False),
+        "urls": urls,
+        "notify_on_success": bool(urls) and _ask_bool("Notify on successful backups too?", default=False),
         "notify_on_failure": True,
     }
 

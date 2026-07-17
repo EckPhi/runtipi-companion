@@ -123,6 +123,10 @@ class UpdatesConfig:
 
 @dataclass
 class NotifyConfig:
+    # Apprise URLs (https://github.com/caronc/apprise): ntfy://, discord://,
+    # mailto://, ... Every URL gets every notification.
+    urls: list = field(default_factory=list)
+    # Deprecated: single generic JSON webhook, kept for backward compatibility.
     webhook_url: Optional[str] = None
     notify_on_success: bool = False
     notify_on_failure: bool = True
