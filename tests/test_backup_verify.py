@@ -81,3 +81,49 @@ def test_latest_per_app_groups_and_reduces():
         ("migrated", "hello", "hello-daily-2026-07-02.tar.gz"),
         ("migrated", "world", "world-weekly-2026-07-01.tar.gz"),
     ]
+
+
+def test_run_backup_continues_past_failing_app(tmp_path, monkeypatch):
+    """One app failing to stop (e.g. runtipi-cli erroring) must not cancel
+    the other apps' backups; the run still fails at the end."""
+    import pytest as _pytest
+
+    from runtipi_companion.backup import runner
+    from runtipi_companion.backup.runner import BackupRunError, run_backup
+    from runtipi_companion.config import CompanionConfig
+    from runtipi_companion.system.shell import CommandError
+
+    runtipi = tmp_path / "runtipi"
+    for app in ("broken", "healthy"):
+        (runtipi / "apps" / "migrated" / app).mkdir(parents=True)
+        (runtipi / "app-data" / "migrated" / app).mkdir(parents=True)
+        (runtipi / "app-data" / "migrated" / app / "data.txt").write_text("hi")
+
+    class StubCLI:
+        def __init__(self, *a, **k):
+            self.cli_path = "/stub"
+
+        def is_app_running(self, app_id, store):
+            return True
+
+        def app_stop(self, ref):
+            if ref.startswith("broken"):
+                raise CommandError(["runtipi-cli", "app", "stop", ref], 1, "rabbitmq exploded")
+
+        def app_start(self, ref):
+            pass
+
+    monkeypatch.setattr(runner, "RuntipiCLI", StubCLI)
+
+    cfg = CompanionConfig()
+    cfg.runtipi.path = str(runtipi)
+    cfg.backup.local_path = str(tmp_path / "backups")
+    cfg.backup.sleep_duration = 0
+
+    with _pytest.raises(BackupRunError, match="1 of 2.*broken:migrated"):
+        run_backup(cfg, "daily", local_only=True)
+
+    healthy = list((tmp_path / "backups" / "migrated" / "healthy").glob("*.tar.gz"))
+    assert len(healthy) == 1, "healthy app should still have been backed up"
+    broken = list((tmp_path / "backups" / "migrated" / "broken").glob("*.tar.gz"))
+    assert broken == [], "broken app must not produce an archive after its stop failed"

@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-runtipi-companion = "runtipi_companion.cli:app"
+runtipi-companion = "runtipi_companion.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0.0", "ruff>=0.6.0", "pre-commit>=3.5.0"]

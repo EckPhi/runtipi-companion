@@ -3,6 +3,7 @@ pure retention logic, and the rclone wrapper."""
 
 from .runner import (
     AppRef,
+    BackupRunError,
     BackupVerificationError,
     discover_apps,
     run_backup,
@@ -12,6 +13,7 @@ from .runner import (
 
 __all__ = [
     "AppRef",
+    "BackupRunError",
     "BackupVerificationError",
     "discover_apps",
     "run_backup",

@@ -11,6 +11,7 @@ from rich.console import Console
 
 from ..config import CompanionConfig
 from ..system.runtipi_cli import RuntipiCLI
+from ..system.shell import CommandError
 from .rclone import RcloneClient
 from .retention import select_prunable
 
@@ -19,6 +20,13 @@ console = Console()
 
 class BackupVerificationError(RuntimeError):
     pass
+
+
+class BackupRunError(RuntimeError):
+    """One or more apps failed during a backup run. The run continues past
+    per-app failures (a broken app must not stop every other app's backup);
+    this is raised at the end so the exit code and notifications still
+    reflect the failure."""
 
 
 def verify_archive(path: Path) -> None:
@@ -134,62 +142,94 @@ def run_backup(
     created_files = []
     date_str = time.strftime("%Y-%m-%d")
 
+    failures = []
     for ref in app_refs:
-        app_backup_dir = local_backup_root / ref.store / ref.app_id
-        app_backup_dir.mkdir(parents=True, exist_ok=True)
-        dest_file = app_backup_dir / f"{ref.app_id}-{schedule}-{date_str}.tar.gz"
-
-        was_running = cli.is_app_running(ref.app_id, ref.store) if not dry_run else True
-        if stop:
-            if was_running:
-                console.print(f"Stopping {ref.ref}")
-                cli.app_stop(ref.ref)
-                if not dry_run:
-                    time.sleep(cfg.backup.sleep_duration)
-            else:
-                console.print(f"{ref.ref} already stopped")
-
-        console.print(f"Archiving {ref.ref} -> {dest_file}")
-        verify_error = None
-        if not dry_run:
-            _archive_app(cfg.runtipi.path, ref.store, ref.app_id, dest_file)
-            try:
-                verify_archive(dest_file)
-                created_files.append(dest_file)
-            except BackupVerificationError as e:
-                # A corrupt archive must not survive (a later prune could
-                # delete an older good backup in its favor) and must not
-                # fail silently -- but restart the app first.
-                dest_file.unlink(missing_ok=True)
-                verify_error = e
-        else:
-            console.print(f"[yellow]DRY-RUN[/yellow] would create and verify {dest_file}")
-
-        if verify_error is None:
-            # Local retention: keep the `retention` most recent archives for
-            # this app+schedule, delete the rest.
-            existing = [p.name for p in app_backup_dir.glob(f"{ref.app_id}-{schedule}-*.tar.gz")]
-            prunable = select_prunable(existing, ref.app_id, schedule, retention)
-            for name in prunable:
-                target = app_backup_dir / name
-                console.print(f"Pruning old local backup {target}")
-                if not dry_run:
-                    target.unlink(missing_ok=True)
-
-        if stop and was_running:
-            console.print(f"Starting {ref.ref}")
-            cli.app_start(ref.ref)
-            if not dry_run:
-                time.sleep(cfg.backup.sleep_duration)
-
-        if verify_error is not None:
-            console.print(f"[red]{verify_error}[/red] Deleted the corrupt archive.")
-            raise verify_error
+        try:
+            _backup_one_app(
+                cfg, cli, ref, schedule, retention, local_backup_root, date_str, stop, dry_run, created_files
+            )
+        except (CommandError, BackupVerificationError) as e:
+            # One broken app (e.g. runtipi-cli failing to stop it) must not
+            # cancel every other app's backup. Record, move on, fail at end.
+            console.print(f"[red]Backup of {ref.ref} failed:[/red] {e}")
+            failures.append((ref.ref, e))
 
     if not local_only:
+        # Sync whatever succeeded -- a partial backup on the remote beats none.
         sync_to_remotes(cfg, schedule, remotes=remotes, dry_run=dry_run)
 
+    if failures:
+        failed_refs = ", ".join(ref for ref, _ in failures)
+        raise BackupRunError(
+            f"{len(failures)} of {len(app_refs)} app backup(s) failed ({failed_refs}); "
+            f"{len(created_files)} archive(s) were still created and synced. See output above for details."
+        )
+
     return created_files
+
+
+def _backup_one_app(
+    cfg: CompanionConfig,
+    cli: RuntipiCLI,
+    ref: AppRef,
+    schedule: str,
+    retention: int,
+    local_backup_root: Path,
+    date_str: str,
+    stop: bool,
+    dry_run: bool,
+    created_files: list,
+) -> None:
+    app_backup_dir = local_backup_root / ref.store / ref.app_id
+    app_backup_dir.mkdir(parents=True, exist_ok=True)
+    dest_file = app_backup_dir / f"{ref.app_id}-{schedule}-{date_str}.tar.gz"
+
+    was_running = cli.is_app_running(ref.app_id, ref.store) if not dry_run else True
+    if stop:
+        if was_running:
+            console.print(f"Stopping {ref.ref}")
+            cli.app_stop(ref.ref)
+            if not dry_run:
+                time.sleep(cfg.backup.sleep_duration)
+        else:
+            console.print(f"{ref.ref} already stopped")
+
+    console.print(f"Archiving {ref.ref} -> {dest_file}")
+    verify_error = None
+    if not dry_run:
+        _archive_app(cfg.runtipi.path, ref.store, ref.app_id, dest_file)
+        try:
+            verify_archive(dest_file)
+            created_files.append(dest_file)
+        except BackupVerificationError as e:
+            # A corrupt archive must not survive (a later prune could
+            # delete an older good backup in its favor) and must not
+            # fail silently -- but restart the app first.
+            dest_file.unlink(missing_ok=True)
+            verify_error = e
+    else:
+        console.print(f"[yellow]DRY-RUN[/yellow] would create and verify {dest_file}")
+
+    if verify_error is None:
+        # Local retention: keep the `retention` most recent archives for
+        # this app+schedule, delete the rest.
+        existing = [p.name for p in app_backup_dir.glob(f"{ref.app_id}-{schedule}-*.tar.gz")]
+        prunable = select_prunable(existing, ref.app_id, schedule, retention)
+        for name in prunable:
+            target = app_backup_dir / name
+            console.print(f"Pruning old local backup {target}")
+            if not dry_run:
+                target.unlink(missing_ok=True)
+
+    if stop and was_running:
+        console.print(f"Starting {ref.ref}")
+        cli.app_start(ref.ref)
+        if not dry_run:
+            time.sleep(cfg.backup.sleep_duration)
+
+    if verify_error is not None:
+        console.print("Deleted the corrupt archive.")
+        raise verify_error
 
 
 def sync_to_remotes(

@@ -23,6 +23,7 @@ from .setup import services as services_mod
 from .setup import wizard as setup_wizard
 from .system import version_check
 from .system.notify import notify
+from .system.shell import CommandError
 from .system.shell import run as shell_run
 from .ui import config_wizard, tui
 
@@ -32,6 +33,9 @@ app = typer.Typer(
     help="Companion CLI for Runtipi: multi-remote backups, restores, updates, "
     "VPS security hardening, and Tailscale setup.",
     no_args_is_help=True,
+    # Expected operational failures get a one-line message from main(), not
+    # a rich traceback wall; real bugs still traceback (plainly).
+    pretty_exceptions_enable=False,
 )
 
 config_app = typer.Typer(help="Manage runtipi-companion configuration.", no_args_is_help=True)
@@ -496,5 +500,17 @@ def version_cmd():
         console.print("[green]Up to date.[/green]")
 
 
+def main() -> None:
+    """Entry point. Expected operational failures (a runtipi-cli/rclone
+    command failing, a corrupt archive, a partly-failed backup run) exit 1
+    with a one-line error instead of a traceback; unexpected exceptions
+    still traceback, because those are bugs worth reporting."""
+    try:
+        app()
+    except (CommandError, backup_mod.BackupRunError, backup_mod.BackupVerificationError, FileNotFoundError) as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1) from e
+
+
 if __name__ == "__main__":
-    app()
+    main()
