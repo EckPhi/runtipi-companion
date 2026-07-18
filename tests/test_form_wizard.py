@@ -5,7 +5,7 @@ from textual.widgets import Input
 from runtipi_companion.config import load_config
 from runtipi_companion.ui import validators as v
 from runtipi_companion.ui.config_wizard import write_config
-from runtipi_companion.ui.form_wizard import ConfigFormApp, RemoteForm
+from runtipi_companion.ui.form_wizard import ConfigFormApp, NotifyUrlRow, RemoteForm
 
 # ---- pure validators (the realtime checks) ----
 
@@ -38,10 +38,10 @@ def test_rclone_target_validator():
     assert v.remote_name("bad name") is not None
 
 
-def test_apprise_urls_validator():
-    assert v.apprise_urls_csv("") is None
-    assert v.apprise_urls_csv("definitely not a url") is not None
-    assert v.apprise_urls_csv("ntfy://ntfy.sh/my-topic") is None
+def test_apprise_url_validator():
+    assert v.apprise_url("") is not None  # empty row -> remove it instead
+    assert v.apprise_url("definitely not a url") is not None
+    assert v.apprise_url("ntfy://ntfy.sh/my-topic") is None
 
 
 # ---- the form itself ----
@@ -113,3 +113,26 @@ def test_form_collects_added_remote(tmp_path):
     assert remote["name"] == "proton"
     assert remote["rclone_remote"] == "proton:backups/runtipi"
     assert "daily" in remote["schedules"]
+
+
+def test_form_collects_notify_url_rows(tmp_path):
+    dest = tmp_path / "config.yaml"
+
+    async def actions(app, pilot):
+        await pilot.pause()
+        container = app.query_one("#notify-urls")
+        await container.mount(NotifyUrlRow())
+        await container.mount(NotifyUrlRow())
+        await pilot.pause()
+        rows = list(app.query(NotifyUrlRow))
+        rows[0].query_one(".notify-url", Input).value = "ntfy://ntfy.sh/my-topic"
+        # second row left empty -> dropped on collect (but would block save
+        # via its validator; clear it by removing the row)
+        await rows[1].remove()
+        await pilot.pause()
+        app.action_save()
+        await pilot.pause()
+
+    answers = _drive(actions, dest)
+    assert answers is not None
+    assert answers["notify"]["urls"] == ["ntfy://ntfy.sh/my-topic"]

@@ -68,6 +68,24 @@ class ScheduleRow(Horizontal):
         return {"retention": int(self.query_one(".sched-retention", Input).value or 3)}
 
 
+class NotifyUrlRow(Horizontal):
+    """One apprise URL: input (validated through apprise itself) + remove."""
+
+    def __init__(self):
+        super().__init__(classes="notify-url-row")
+
+    def compose(self) -> ComposeResult:
+        yield Input(
+            classes="notify-url",
+            placeholder="ntfy://ntfy.sh/my-topic",
+            validators=[FnValidator(v.apprise_url)],
+        )
+        yield Button("Remove", classes="remove-notify-url", variant="warning")
+
+    def value(self) -> Optional[str]:
+        return self.query_one(".notify-url", Input).value.strip() or None
+
+
 class RemoteForm(Vertical):
     """Sub-form for one rclone backup remote; added/removed dynamically."""
 
@@ -137,6 +155,9 @@ class ConfigFormApp(App):
     .remote-form { border: round $secondary; padding: 0 1; margin-bottom: 1; height: auto; }
     #remotes { height: auto; }
     #security-custom { height: auto; }
+    #notify-urls { height: auto; }
+    .notify-url-row { height: 3; }
+    .notify-url { width: 60; }
     #error-bar { color: $error; height: auto; min-height: 1; }
     #buttons { height: 3; margin-top: 1; }
     """
@@ -215,14 +236,9 @@ class ConfigFormApp(App):
             yield Checkbox("Enable Tailscale SSH", value=False, id="ts-ssh")
 
             yield Static("Notifications", classes="section")
-            yield _field(
-                "Apprise URLs, comma-separated (empty = none)",
-                Input(
-                    id="notify-urls",
-                    placeholder="ntfy://ntfy.sh/my-topic",
-                    validators=[FnValidator(v.apprise_urls_csv)],
-                ),
-            )
+            yield Static("Apprise URLs (one per row, validated live)", classes="field-label")
+            yield Vertical(id="notify-urls")
+            yield Button("Add notification URL", id="add-notify-url", variant="primary")
             yield Checkbox("Notify on successful backups too", value=False, id="notify-success")
 
             yield Static("Save", classes="section")
@@ -253,9 +269,12 @@ class ConfigFormApp(App):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "add-remote":
             self.query_one("#remotes", Vertical).mount(RemoteForm())
-        elif event.button.has_class("remove-remote"):
+        elif event.button.id == "add-notify-url":
+            self.query_one("#notify-urls", Vertical).mount(NotifyUrlRow())
+        elif event.button.has_class("remove-remote") or event.button.has_class("remove-notify-url"):
+            target_type = RemoteForm if event.button.has_class("remove-remote") else NotifyUrlRow
             node = event.button.parent
-            while node is not None and not isinstance(node, RemoteForm):
+            while node is not None and not isinstance(node, target_type):
                 node = node.parent
             if node is not None:
                 node.remove()
@@ -339,7 +358,7 @@ class ConfigFormApp(App):
             "tailscale_port_udp": 41641,
         }
 
-        urls = [u.strip() for u in self._text("notify-urls").split(",") if u.strip()]
+        urls = [url for row in self.query(NotifyUrlRow) if (url := row.value()) is not None]
         return {
             "version": CONFIG_VERSION,
             "runtipi": {

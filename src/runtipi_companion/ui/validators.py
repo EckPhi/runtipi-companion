@@ -71,15 +71,13 @@ def remote_name(value: str) -> Optional[str]:
     return None
 
 
-def apprise_urls_csv(value: str) -> Optional[str]:
-    """Realtime check of comma-separated apprise URLs via apprise itself."""
-    parts = [p.strip() for p in value.split(",") if p.strip()]
-    if not parts:
-        return None  # optional field
+def apprise_url(value: str) -> Optional[str]:
+    """Realtime check of a single apprise URL via apprise itself."""
+    value = value.strip()
+    if not value:
+        return "Required (remove the row if unused)."
     import apprise  # lazy: costs a few hundred ms on first use
 
-    client = apprise.Apprise()
-    for part in parts:
-        if not client.add(part):
-            return f"Not a valid apprise URL: {part}"
+    if not apprise.Apprise().add(value):
+        return "Not a valid apprise URL."
     return None
