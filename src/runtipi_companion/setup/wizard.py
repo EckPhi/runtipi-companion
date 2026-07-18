@@ -77,7 +77,9 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
                 run(["mkdir", "-p", str(parent)], sudo=True)
             else:
                 parent.mkdir(parents=True, exist_ok=True)
-        run(["bash", "-c", install_cmd], sudo=needs_root(runtipi_path), dry_run=False)
+        # interactive: the installer prints download/boot progress the user
+        # should see live (it can run for minutes).
+        run(["bash", "-c", install_cmd], sudo=needs_root(runtipi_path), dry_run=False, interactive=True)
         console.print(
             "[green]Installer finished.[/green] It already prepared and started Runtipi, "
             "so you can answer 'n' to the prepare/start questions below."
@@ -99,10 +101,10 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
         return
 
     if confirm("Run 'runtipi-cli prepare' now? (checks permissions, generates config)", assume_yes):
-        cli.prepare()
+        cli.prepare(interactive=True)
 
     if confirm("Start Runtipi now ('runtipi-cli start')?", assume_yes):
-        cli.start()
+        cli.start(interactive=True)
 
     if not dry_run:
         for directory in (cfg.backup_local_path, cfg.backup.work_dir):

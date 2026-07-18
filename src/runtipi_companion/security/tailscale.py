@@ -47,8 +47,11 @@ def install_tailscale(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes:
         console.print("Aborted.")
         return
 
-    run(["sh", "-c", f"curl -fsSL {INSTALL_URL} | sh"], sudo=True)
-    run(up_cmd, sudo=True)
+    # Both need the live terminal: the installer prints progress, and
+    # without an authkey `tailscale up` prints a login URL and blocks until
+    # the user visits it -- captured output would look like a freeze.
+    run(["sh", "-c", f"curl -fsSL {INSTALL_URL} | sh"], sudo=True, interactive=True)
+    run(up_cmd, sudo=True, interactive=True)
     console.print(
         "[green]Tailscale installed.[/green] Run 'runtipi-companion tailscale status' to see your device's IP."
     )

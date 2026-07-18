@@ -52,8 +52,10 @@ class RuntipiCLI:
 
     # --- core ---
 
-    def start(self) -> RunResult:
-        return self._run(["start"])
+    # start/prepare accept **kwargs so interactive callers (the setup
+    # wizard) can stream the minutes-long docker pull/boot output live.
+    def start(self, **kwargs) -> RunResult:
+        return self._run(["start"], **kwargs)
 
     def stop(self) -> RunResult:
         return self._run(["stop"])
@@ -61,8 +63,8 @@ class RuntipiCLI:
     def restart(self) -> RunResult:
         return self._run(["restart"])
 
-    def prepare(self) -> RunResult:
-        return self._run(["prepare"])
+    def prepare(self, **kwargs) -> RunResult:
+        return self._run(["prepare"], **kwargs)
 
     def update_core(self, version: str = "latest") -> RunResult:
         return self._run(["update", version])

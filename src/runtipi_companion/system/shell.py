@@ -41,12 +41,19 @@ def run(
     cwd: Optional[str] = None,
     input: Optional[str] = None,
     quiet: bool = False,
+    interactive: bool = False,
 ) -> RunResult:
     """Run a shell command, honoring dry-run mode.
 
     In dry-run mode the command is printed and never executed, and a
     successful no-op RunResult is returned so callers can chain logic
     without special-casing dry-run everywhere.
+
+    `interactive` hands the terminal to the child (stdin/stdout/stderr
+    inherited, nothing captured) -- required for commands that prompt or
+    print progress the user must see live, e.g. `tailscale up` printing its
+    login URL, or installer scripts. The RunResult then has empty
+    stdout/stderr.
     """
     full_cmd = list(cmd)
     if sudo and full_cmd[0] != "sudo":
@@ -62,13 +69,16 @@ def run(
         console.print(f"[dim]$ {printable}[/dim]")
 
     try:
-        proc = subprocess.run(
-            full_cmd,
-            cwd=cwd,
-            input=input,
-            capture_output=True,
-            text=True,
-        )
+        if interactive:
+            proc = subprocess.run(full_cmd, cwd=cwd)
+        else:
+            proc = subprocess.run(
+                full_cmd,
+                cwd=cwd,
+                input=input,
+                capture_output=True,
+                text=True,
+            )
     except FileNotFoundError as e:
         # Missing binary (docker, rclone, tailscale, ...) shouldn't produce a
         # raw Python traceback -- surface it the same way a failed command
@@ -76,13 +86,14 @@ def run(
         raise CommandError(full_cmd, 127, f"{full_cmd[0]}: command not found ({e})") from e
 
     if check and proc.returncode != 0:
-        raise CommandError(full_cmd, proc.returncode, proc.stderr)
+        # Interactive children already wrote their errors to the terminal.
+        raise CommandError(full_cmd, proc.returncode, proc.stderr or "")
 
     return RunResult(
         cmd=full_cmd,
         returncode=proc.returncode,
-        stdout=proc.stdout,
-        stderr=proc.stderr,
+        stdout=proc.stdout or "",
+        stderr=proc.stderr or "",
         dry_run=False,
     )
 
