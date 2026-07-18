@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 from collections import deque
@@ -42,6 +43,17 @@ def _should_stream(*, quiet: bool, interactive: bool, input: Optional[str]) -> b
     """Stream-and-collapse only makes sense on a real terminal, for display
     commands (quiet callers parse stdout instead) that need no stdin."""
     return not quiet and not interactive and input is None and console.is_terminal
+
+
+def _ensure_sudo_credentials(full_cmd: list) -> None:
+    """Refresh sudo's credential cache on the real terminal BEFORE running a
+    sudo command in stream mode: the live tail repaints the screen, which
+    hides sudo's password prompt and looks like a freeze."""
+    if os.geteuid() == 0:
+        return
+    auth = subprocess.run(["sudo", "-v"])
+    if auth.returncode != 0:
+        raise CommandError(full_cmd, auth.returncode, "sudo authentication failed")
 
 
 def _stream(full_cmd: list, cwd: Optional[str]) -> tuple:
@@ -120,6 +132,8 @@ def run(
             proc = subprocess.run(full_cmd, cwd=cwd)
             returncode, stdout, stderr = proc.returncode, "", ""
         elif _should_stream(quiet=quiet, interactive=interactive, input=input):
+            if full_cmd[0] == "sudo":
+                _ensure_sudo_credentials(full_cmd)
             returncode, merged = _stream(full_cmd, cwd)
             # stderr was merged into the stream; expose the merged text on
             # both fields so failure paths that print .stderr still work.
