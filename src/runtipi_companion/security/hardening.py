@@ -208,7 +208,7 @@ def harden_tailscale_security(cfg: CompanionConfig, *, dry_run: bool = True, ass
         return
 
     if ts_cfg.tailscale_ssh:
-        console.print("  tailscale up --ssh")
+        console.print("  tailscale set --ssh=true")
     console.print("  ufw allow in on tailscale0")
     console.print(f"  ufw allow {ts_cfg.tailscale_port_udp}/udp   (tailscale's own coordination port, stays public)")
     public_ports = sorted(set(cfg.security.ufw.allowed_tcp_ports))
@@ -240,7 +240,10 @@ def harden_tailscale_security(cfg: CompanionConfig, *, dry_run: bool = True, ass
     run(["apt-get", "install", "-y", "ufw"], sudo=True)
 
     if ts_cfg.tailscale_ssh:
-        run(["tailscale", "up", "--ssh"], sudo=True)
+        # 'tailscale set' flips one setting in place; 'tailscale up --ssh'
+        # would refuse unless every other non-default flag (exit node, ...)
+        # is repeated on the command line.
+        run(["tailscale", "set", "--ssh=true"], sudo=True)
 
     run(["ufw", "allow", "in", "on", "tailscale0"], sudo=True)
     run(["ufw", "allow", f"{ts_cfg.tailscale_port_udp}/udp"], sudo=True)

@@ -65,7 +65,7 @@ def test_harden_tailscale_security_apply_runs_expected_commands(tmp_path, monkey
     monkeypatch.setattr(security, "run", fake_run)
     security.harden_tailscale_security(cfg, dry_run=False, assume_yes=True)
 
-    assert ["tailscale", "up", "--ssh"] in calls
+    assert ["tailscale", "set", "--ssh=true"] in calls
     assert ["ufw", "allow", "in", "on", "tailscale0"] in calls
     assert ["ufw", "allow", "41641/udp"] in calls
     assert ["ufw", "delete", "allow", "22/tcp"] in calls
@@ -117,3 +117,24 @@ def test_harden_ssh_apply_writes_via_sudo(tmp_path, monkeypatch):
     assert any(cmd[:2] == ["systemctl", "restart"] for cmd in sudo_cmds)
     # the file itself was never written by this process
     assert "PasswordAuthentication yes" in sshd.read_text()
+
+
+def test_tailscale_lockdown_uses_set_not_up(tmp_path, monkeypatch):
+    """'tailscale up --ssh' refuses when other non-default flags (exit node)
+    aren't repeated; 'tailscale set --ssh=true' flips just that setting."""
+    from runtipi_companion.system.shell import RunResult
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return RunResult(cmd=list(cmd), returncode=0, stdout="", stderr="", dry_run=False)
+
+    monkeypatch.setattr(security, "run", fake_run)
+    monkeypatch.setattr(security.shutil, "which", lambda name: "/usr/bin/tailscale")
+
+    cfg = load_config(str(write_config(tmp_path, TS_ONLY_CONFIG)))
+    security.harden_tailscale_security(cfg, dry_run=False, assume_yes=True)
+
+    assert ["tailscale", "set", "--ssh=true"] in calls
+    assert not any(cmd[:2] == ["tailscale", "up"] for cmd in calls)
