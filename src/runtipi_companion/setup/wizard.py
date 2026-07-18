@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -12,6 +13,10 @@ from ..system.runtipi_cli import RuntipiCLI, RuntipiCLIError
 from ..system.shell import confirm, run
 
 console = Console()
+
+# Official runtipi installer: downloads the released runtipi-cli into
+# <cwd>/runtipi and starts the stack. Same URL as runtipi's install docs.
+INSTALLER_URL = "https://setup.runtipi.io"
 
 
 def needs_root(path: Path) -> bool:
@@ -44,22 +49,39 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
 
     runtipi_path = Path(cfg.runtipi.path)
     if not runtipi_path.exists():
+        # A git clone would be useless here: the source repo does not contain
+        # the runtipi-cli binary. The official installer downloads the
+        # released CLI into <cwd>/runtipi and boots the stack -- same flow as
+        # runtipi's own docs.
         console.print(f"Runtipi path {runtipi_path} does not exist yet.")
-        if confirm(f"Clone runtipi into {runtipi_path}?", assume_yes):
-            # The clone runs for real even in dry-run mode: it only creates a
-            # new directory (nothing to preview, nothing overwritten), and
-            # every later step depends on the files actually existing.
-            # sudo, because the runtipi tree conventionally lives root-owned
-            # under /opt (the official installer does the same, and every
-            # runtipi-cli call is already sudo'd).
-            run(
-                ["git", "clone", "https://github.com/runtipi/runtipi.git", str(runtipi_path)],
-                dry_run=False,
-                sudo=needs_root(runtipi_path),
+        if runtipi_path.name != "runtipi":
+            console.print(
+                f"[yellow]The official installer always creates a directory named 'runtipi', but "
+                f"runtipi.path is {runtipi_path}. Adjust the config or move the install afterwards.[/yellow]"
             )
-        else:
-            console.print("Skipping clone -- make sure runtipi.path in your config points at an existing install.")
+        if not confirm(
+            f"Install Runtipi into {runtipi_path} with the official installer ({INSTALLER_URL})?", assume_yes
+        ):
+            console.print("Skipping install -- make sure runtipi.path in your config points at an existing install.")
             return
+        parent = runtipi_path.parent
+        install_cmd = f"cd {shlex.quote(str(parent))} && curl -L {INSTALLER_URL} | bash"
+        if dry_run:
+            # Unlike a plain directory creation this downloads, installs, and
+            # STARTS runtipi -- far too much side effect for a preview run.
+            console.print(f"[yellow]DRY-RUN[/yellow] $ {install_cmd}")
+            console.print("Re-run with --apply to install for real, then this wizard continues past this point.")
+            return
+        if not parent.exists():
+            if needs_root(parent):
+                run(["mkdir", "-p", str(parent)], sudo=True)
+            else:
+                parent.mkdir(parents=True, exist_ok=True)
+        run(["bash", "-c", install_cmd], sudo=needs_root(runtipi_path), dry_run=False)
+        console.print(
+            "[green]Installer finished.[/green] It already prepared and started Runtipi, "
+            "so you can answer 'n' to the prepare/start questions below."
+        )
     else:
         console.print(f"Found existing runtipi install at {runtipi_path}")
 
@@ -69,8 +91,10 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
     except RuntipiCLIError as e:
         console.print(f"[red]{e}[/red]")
         console.print(
-            "If you just cloned runtipi, runtipi-cli is built as part of first boot. "
-            "Set runtipi.cli_path once you know where it landed and re-run this wizard."
+            "runtipi-cli ships with the official installer (it is not in the git repo). "
+            "If your install lives elsewhere, set runtipi.cli_path in the config and re-run this wizard. "
+            f"If {runtipi_path} is just a leftover source clone without runtipi-cli, remove it "
+            "and re-run this wizard to use the official installer."
         )
         return
 
