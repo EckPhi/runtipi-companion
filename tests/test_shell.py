@@ -48,3 +48,27 @@ def test_run_interactive_failure_raises_clean_commanderror(monkeypatch):
     except shell.CommandError as e:
         assert e.returncode == 3
         assert e.stderr == ""
+
+
+def test_stream_collapses_on_success(monkeypatch):
+    monkeypatch.setattr(shell, "_should_stream", lambda **k: True)
+    result = shell.run(["sh", "-c", "echo line1; echo line2"])
+    assert result.ok
+    assert "line1" in result.stdout and "line2" in result.stdout
+    assert result.stderr == ""
+
+
+def test_stream_failure_carries_merged_output(monkeypatch):
+    monkeypatch.setattr(shell, "_should_stream", lambda **k: True)
+    try:
+        shell.run(["sh", "-c", "echo visible-out; echo visible-err >&2; exit 5"])
+        raise AssertionError("expected CommandError")
+    except shell.CommandError as e:
+        assert e.returncode == 5
+        assert "visible-out" in e.stderr
+        assert "visible-err" in e.stderr
+
+
+def test_no_stream_off_terminal():
+    # pytest runs without a tty -> stream mode must be off by default
+    assert shell._should_stream(quiet=False, interactive=False, input=None) is False
