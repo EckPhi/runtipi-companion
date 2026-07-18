@@ -136,3 +136,96 @@ def test_form_collects_notify_url_rows(tmp_path):
     answers = _drive(actions, dest)
     assert answers is not None
     assert answers["notify"]["urls"] == ["ntfy://ntfy.sh/my-topic"]
+
+
+def test_form_prefills_and_preserves_unexposed_fields(tmp_path):
+    """Reopening the wizard on an existing config must show its values and
+    carry through fields the form doesn't expose."""
+
+    initial = {
+        "version": 2,
+        "runtipi": {"path": "/srv/runtipi", "cli_path": None, "apps": ["jellyfin"]},
+        "backup": {
+            "work_dir": "/tmp/rc",
+            "local_path": None,
+            "host_label": "nas",
+            "stop_apps": False,
+            "sleep_duration": 42,
+            "schedules": {"weekly": {"retention": 9}},
+            "remotes": [
+                {
+                    "name": "proton",
+                    "rclone_remote": "proton:backups",
+                    "enabled": False,
+                    "bandwidth_limit": "5M",
+                    "schedules": {"daily": {"retention": 14}},
+                }
+            ],
+        },
+        "security": {
+            "ssh": {"disable_password_auth": True, "disable_root_login": True, "port": None},
+            "ufw": {"enable": True, "allowed_tcp_ports": [22]},
+            "fail2ban": {"enabled": True, "maxretry": 3, "bantime": 3600},
+            "tailscale_only": {"enabled": False, "tailscale_ssh": False, "tailscale_port_udp": 55555},
+        },
+        "tailscale": {"enabled": True, "auth_key_env": "MY_KEY", "advertise_exit_node": True, "ssh": True},
+        "updates": {
+            "auto_update_core": True,
+            "auto_update_apps": False,
+            "exclude_apps": ["grist"],
+            "backup_before": False,
+        },
+        "notify": {
+            "urls": ["ntfy://ntfy.sh/topic"],
+            "webhook_url": "https://legacy.example/hook",
+            "notify_on_success": True,
+            "notify_on_failure": True,
+        },
+    }
+    dest = tmp_path / "config.yaml"
+
+    async def actions(app, pilot):
+        await pilot.pause()
+        # prefill visible
+        assert app.query_one("#runtipi-path", Input).value == "/srv/runtipi"
+        assert app.query_one("#host-label", Input).value == "nas"
+        assert len(list(app.query(RemoteForm))) == 1
+        assert len(list(app.query(NotifyUrlRow))) == 1
+        app.action_save()
+        await pilot.pause()
+
+    async def main():
+        app = ConfigFormApp(str(dest), initial=initial)
+        async with app.run_test(size=(100, 40)) as pilot:
+            await actions(app, pilot)
+        return app.return_value
+
+    import asyncio
+
+    answers = asyncio.run(main())
+    assert answers is not None
+    answers.pop("_save_path")
+    # visible values round-trip
+    assert answers["runtipi"]["apps"] == ["jellyfin"]
+    assert answers["backup"]["schedules"] == {"weekly": {"retention": 9}}
+    (remote,) = answers["backup"]["remotes"]
+    assert remote["enabled"] is False
+    assert remote["bandwidth_limit"] == "5M"
+    assert answers["notify"]["urls"] == ["ntfy://ntfy.sh/topic"]
+    # unexposed values preserved
+    assert answers["backup"]["sleep_duration"] == 42
+    assert answers["updates"] == {
+        "auto_update_core": True,
+        "auto_update_apps": False,
+        "exclude_apps": ["grist"],
+        "backup_before": False,
+    }
+    assert answers["notify"]["webhook_url"] == "https://legacy.example/hook"
+    assert answers["tailscale"]["auth_key_env"] == "MY_KEY"
+    assert answers["security"]["tailscale_only"]["tailscale_port_udp"] == 55555
+    # config still valid end to end
+    import yaml as _yaml  # noqa: F401
+
+    write_config(answers, dest)
+    cfg = load_config(str(dest))
+    assert cfg.backup.host_label == "nas"

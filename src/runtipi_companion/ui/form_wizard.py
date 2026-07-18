@@ -2,6 +2,11 @@
 dropdown, with realtime per-field validation. The prompt-based flow in
 config_wizard.py remains as the --classic fallback and for non-tty runs.
 
+When a config file already exists, the form opens pre-filled with its
+values (edit mode); fields the form doesn't expose (sleep_duration, the
+updates section, the legacy webhook_url, ...) are carried through
+untouched instead of being reset to defaults.
+
 The form only *collects* answers; writing goes through
 config_wizard.write_config so the same round-trip validation guards both
 wizards.
@@ -13,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import yaml
 from rich.console import Console
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -27,6 +33,12 @@ console = Console()
 
 LOCAL_RETENTION_DEFAULTS = cw.LOCAL_RETENTION_DEFAULTS
 REMOTE_RETENTION_DEFAULTS = cw.REMOTE_RETENTION_DEFAULTS
+
+RECOMMENDED_SECURITY = {
+    "ssh": {"disable_password_auth": True, "disable_root_login": True, "port": None},
+    "ufw": {"enable": True, "allowed_tcp_ports": [22]},
+    "fail2ban": {"enabled": True, "maxretry": 3, "bantime": 3600},
+}
 
 
 class FnValidator(Validator):
@@ -68,14 +80,32 @@ class ScheduleRow(Horizontal):
         return {"retention": int(self.query_one(".sched-retention", Input).value or 3)}
 
 
+def _schedule_rows(initial_schedules: Optional[dict], defaults: dict) -> list:
+    """Rows seeded from an existing config's schedules dict, or from the
+    documented defaults when there is none."""
+    rows = []
+    for schedule in VALID_SCHEDULES:
+        if initial_schedules is None:
+            enabled = schedule in defaults
+            retention = defaults.get(schedule, 3)
+        else:
+            entry = initial_schedules.get(schedule)
+            enabled = entry is not None
+            retention = (entry or {}).get("retention", defaults.get(schedule, 3))
+        rows.append(ScheduleRow(schedule, enabled=enabled, retention=retention))
+    return rows
+
+
 class NotifyUrlRow(Horizontal):
     """One apprise URL: input (validated through apprise itself) + remove."""
 
-    def __init__(self):
+    def __init__(self, initial: str = ""):
         super().__init__(classes="notify-url-row")
+        self._initial = initial
 
     def compose(self) -> ComposeResult:
         yield Input(
+            value=self._initial,
             classes="notify-url",
             placeholder="ntfy://ntfy.sh/my-topic",
             validators=[FnValidator(v.apprise_url)],
@@ -89,15 +119,21 @@ class NotifyUrlRow(Horizontal):
 class RemoteForm(Vertical):
     """Sub-form for one rclone backup remote; added/removed dynamically."""
 
-    def __init__(self):
+    def __init__(self, initial: Optional[dict] = None):
         super().__init__(classes="remote-form")
+        self._initial = initial or {}
 
     def compose(self) -> ComposeResult:
+        init = self._initial
         yield Static("Remote", classes="section-sub")
-        yield _field("Short name (e.g. backblaze)", Input(classes="r-name", validators=[FnValidator(v.remote_name)]))
+        yield _field(
+            "Short name (e.g. backblaze)",
+            Input(value=init.get("name", ""), classes="r-name", validators=[FnValidator(v.remote_name)]),
+        )
         yield _field(
             "rclone target (<remote>:<path>)",
             Input(
+                value=init.get("rclone_remote", ""),
                 classes="r-target",
                 placeholder="b2-runtipi:my-bucket/runtipi-backups",
                 validators=[FnValidator(v.rclone_target)],
@@ -105,15 +141,11 @@ class RemoteForm(Vertical):
         )
         yield _field(
             "Bandwidth limit (empty = none)",
-            Input(classes="r-bwlimit", placeholder="5M"),
+            Input(value=init.get("bandwidth_limit") or "", classes="r-bwlimit", placeholder="5M"),
         )
+        yield Checkbox("Enabled", value=init.get("enabled", True), classes="r-enabled")
         yield Static("Retention on this remote:", classes="field-label")
-        for schedule in VALID_SCHEDULES:
-            yield ScheduleRow(
-                schedule,
-                enabled=schedule in REMOTE_RETENTION_DEFAULTS,
-                retention=REMOTE_RETENTION_DEFAULTS.get(schedule, 3),
-            )
+        yield from _schedule_rows(init.get("schedules") if init else None, REMOTE_RETENTION_DEFAULTS)
         yield Button("Remove this remote", classes="remove-remote", variant="warning")
 
     def value(self) -> Optional[dict]:
@@ -131,15 +163,23 @@ class RemoteForm(Vertical):
         return {
             "name": name,
             "rclone_remote": target,
-            "enabled": True,
+            "enabled": self.query_one(".r-enabled", Checkbox).value,
             "bandwidth_limit": bwlimit,
             "schedules": schedules,
         }
 
 
+def _is_recommended_security(security: dict) -> bool:
+    """Does an existing config's security section match the recommended
+    preset (ignoring tailscale_only, which the form handles separately)?"""
+    trimmed = {k: security.get(k) or {} for k in ("ssh", "ufw", "fail2ban")}
+    return trimmed == RECOMMENDED_SECURITY
+
+
 class ConfigFormApp(App):
-    """The whole config as one scrollable form. Returns the answers dict via
-    App.exit(), or None when cancelled."""
+    """The whole config as one scrollable form, optionally pre-filled from
+    an existing config file. Returns the answers dict via App.exit(), or
+    None when cancelled."""
 
     TITLE = "runtipi-companion config"
     BINDINGS = [("ctrl+s", "save", "Save"), ("escape", "cancel", "Cancel")]
@@ -162,37 +202,75 @@ class ConfigFormApp(App):
     #buttons { height: 3; margin-top: 1; }
     """
 
-    def __init__(self, default_save_path: str):
+    def __init__(self, default_save_path: str, initial: Optional[dict] = None):
         super().__init__()
         self.default_save_path = default_save_path
+        self.initial = initial or {}
+
+    def _get(self, *keys, default=None):
+        node = self.initial
+        for key in keys:
+            if not isinstance(node, dict) or key not in node:
+                return default
+            node = node[key]
+        return default if node is None else node
 
     def compose(self) -> ComposeResult:
+        security = self._get("security", default={})
+        recommended = _is_recommended_security(security) if self.initial else True
         with VerticalScroll(id="form"):
             yield Static("Runtipi install", classes="section")
             yield _field(
                 "Path to runtipi install",
-                Input(value="/opt/runtipi", id="runtipi-path", validators=[FnValidator(v.absolute_path)]),
+                Input(
+                    value=self._get("runtipi", "path", default="/opt/runtipi"),
+                    id="runtipi-path",
+                    validators=[FnValidator(v.absolute_path)],
+                ),
             )
             yield _field(
                 "runtipi-cli path (empty = auto-detect)",
-                Input(id="cli-path", validators=[FnValidator(v.optional_absolute_path)]),
+                Input(
+                    value=self._get("runtipi", "cli_path", default="") or "",
+                    id="cli-path",
+                    validators=[FnValidator(v.optional_absolute_path)],
+                ),
             )
-            yield _field("App ids to manage, comma-separated (empty = all)", Input(id="apps"))
+            yield _field(
+                "App ids to manage, comma-separated (empty = all)",
+                Input(value=", ".join(self._get("runtipi", "apps", default=[])), id="apps"),
+            )
 
             yield Static("Backups", classes="section")
             yield _field(
                 "Local backup directory (empty = <install>/backups)",
-                Input(id="local-path", validators=[FnValidator(v.optional_absolute_path)]),
+                Input(
+                    value=self._get("backup", "local_path", default="") or "",
+                    id="local-path",
+                    validators=[FnValidator(v.optional_absolute_path)],
+                ),
             )
-            yield _field("Host label on remotes (empty = hostname)", Input(id="host-label"))
+            yield _field(
+                "Host label on remotes (empty = hostname)",
+                Input(value=self._get("backup", "host_label", default="") or "", id="host-label"),
+            )
             yield _field(
                 "Scratch directory",
-                Input(value="/tmp/runtipi-companion", id="work-dir", validators=[FnValidator(v.absolute_path)]),
+                Input(
+                    value=self._get("backup", "work_dir", default="/tmp/runtipi-companion"),
+                    id="work-dir",
+                    validators=[FnValidator(v.absolute_path)],
+                ),
             )
-            yield Checkbox("Stop apps while backing them up (safer, brief downtime)", value=True, id="stop-apps")
+            yield Checkbox(
+                "Stop apps while backing them up (safer, brief downtime)",
+                value=self._get("backup", "stop_apps", default=True),
+                id="stop-apps",
+            )
             yield Static("Local retention:", classes="field-label")
-            for schedule in VALID_SCHEDULES:
-                yield ScheduleRow(schedule, enabled=True, retention=LOCAL_RETENTION_DEFAULTS.get(schedule, 3))
+            yield from _schedule_rows(
+                self._get("backup", "schedules") if self.initial else None, LOCAL_RETENTION_DEFAULTS
+            )
 
             yield Static("Backup remotes (rclone)", classes="section")
             yield Vertical(id="remotes")
@@ -201,45 +279,89 @@ class ConfigFormApp(App):
             yield Static("Security hardening defaults", classes="section")
             yield Select(
                 [("Recommended (key-only SSH, no root login, UFW, fail2ban)", "recommended"), ("Custom", "custom")],
-                value="recommended",
+                value="recommended" if recommended else "custom",
                 id="security-preset",
                 allow_blank=False,
             )
             with Vertical(id="security-custom"):
-                yield Checkbox("Disable SSH password auth", value=True, id="ssh-nopass")
-                yield Checkbox("Disable SSH root login", value=True, id="ssh-noroot")
+                yield Checkbox(
+                    "Disable SSH password auth",
+                    value=self._get("security", "ssh", "disable_password_auth", default=True),
+                    id="ssh-nopass",
+                )
+                yield Checkbox(
+                    "Disable SSH root login",
+                    value=self._get("security", "ssh", "disable_root_login", default=True),
+                    id="ssh-noroot",
+                )
                 yield _field(
                     "Custom SSH port (empty = keep current)",
-                    Input(id="ssh-port", validators=[FnValidator(v.optional_port)]),
+                    Input(
+                        value=str(self._get("security", "ssh", "port", default="") or ""),
+                        id="ssh-port",
+                        validators=[FnValidator(v.optional_port)],
+                    ),
                 )
-                yield Checkbox("Enable UFW firewall", value=True, id="ufw-on")
-                yield _field(
-                    "UFW allowed TCP ports", Input(value="22", id="ufw-ports", validators=[FnValidator(v.csv_ports)])
+                yield Checkbox(
+                    "Enable UFW firewall", value=self._get("security", "ufw", "enable", default=True), id="ufw-on"
                 )
-                yield Checkbox("Enable fail2ban", value=True, id="f2b-on")
                 yield _field(
-                    "fail2ban max retries", Input(value="3", id="f2b-retries", validators=[FnValidator(v.required_int)])
+                    "UFW allowed TCP ports",
+                    Input(
+                        value=", ".join(
+                            str(p) for p in self._get("security", "ufw", "allowed_tcp_ports", default=[22])
+                        ),
+                        id="ufw-ports",
+                        validators=[FnValidator(v.csv_ports)],
+                    ),
+                )
+                yield Checkbox(
+                    "Enable fail2ban", value=self._get("security", "fail2ban", "enabled", default=True), id="f2b-on"
+                )
+                yield _field(
+                    "fail2ban max retries",
+                    Input(
+                        value=str(self._get("security", "fail2ban", "maxretry", default=3)),
+                        id="f2b-retries",
+                        validators=[FnValidator(v.required_int)],
+                    ),
                 )
                 yield _field(
                     "fail2ban ban time (seconds)",
                     Input(
-                        value="3600",
+                        value=str(self._get("security", "fail2ban", "bantime", default=3600)),
                         id="f2b-bantime",
                         validators=[FnValidator(lambda x: v.required_int(x, 1, 10_000_000))],
                     ),
                 )
 
             yield Static("Tailscale", classes="section")
-            yield Checkbox("Set up Tailscale for private remote access", value=False, id="ts-on")
-            yield Checkbox("Tailscale-only lockdown (VPN-only, cuts public access)", value=False, id="ts-only")
-            yield Checkbox("Advertise as exit node", value=False, id="ts-exit")
-            yield Checkbox("Enable Tailscale SSH", value=False, id="ts-ssh")
+            yield Checkbox(
+                "Set up Tailscale for private remote access",
+                value=self._get("tailscale", "enabled", default=False),
+                id="ts-on",
+            )
+            yield Checkbox(
+                "Tailscale-only lockdown (VPN-only, cuts public access)",
+                value=self._get("security", "tailscale_only", "enabled", default=False),
+                id="ts-only",
+            )
+            yield Checkbox(
+                "Advertise as exit node",
+                value=self._get("tailscale", "advertise_exit_node", default=False),
+                id="ts-exit",
+            )
+            yield Checkbox("Enable Tailscale SSH", value=self._get("tailscale", "ssh", default=False), id="ts-ssh")
 
             yield Static("Notifications", classes="section")
             yield Static("Apprise URLs (one per row, validated live)", classes="field-label")
             yield Vertical(id="notify-urls")
             yield Button("Add notification URL", id="add-notify-url", variant="primary")
-            yield Checkbox("Notify on successful backups too", value=False, id="notify-success")
+            yield Checkbox(
+                "Notify on successful backups too",
+                value=self._get("notify", "notify_on_success", default=False),
+                id="notify-success",
+            )
 
             yield Static("Save", classes="section")
             yield _field(
@@ -328,11 +450,7 @@ class ConfigFormApp(App):
         remotes = [val for form in self.query(RemoteForm) if (val := form.value()) is not None]
 
         if self.query_one("#security-preset", Select).value == "recommended":
-            security = {
-                "ssh": {"disable_password_auth": True, "disable_root_login": True, "port": None},
-                "ufw": {"enable": True, "allowed_tcp_ports": [22]},
-                "fail2ban": {"enabled": True, "maxretry": 3, "bantime": 3600},
-            }
+            security = {key: dict(value) for key, value in RECOMMENDED_SECURITY.items()}
         else:
             security = {
                 "ssh": {
@@ -355,10 +473,12 @@ class ConfigFormApp(App):
         security["tailscale_only"] = {
             "enabled": ts_only,
             "tailscale_ssh": ts_only,
-            "tailscale_port_udp": 41641,
+            "tailscale_port_udp": self._get("security", "tailscale_only", "tailscale_port_udp", default=41641),
         }
 
         urls = [url for row in self.query(NotifyUrlRow) if (url := row.value()) is not None]
+        # Fields the form doesn't expose are carried through from the
+        # existing config instead of being reset to defaults.
         return {
             "version": CONFIG_VERSION,
             "runtipi": {
@@ -371,49 +491,63 @@ class ConfigFormApp(App):
                 "local_path": self._text("local-path") or None,
                 "host_label": self._text("host-label") or None,
                 "stop_apps": self._checked("stop-apps"),
-                "sleep_duration": 10,
+                "sleep_duration": self._get("backup", "sleep_duration", default=10),
                 "schedules": local_schedules,
                 "remotes": remotes,
             },
             "security": security,
             "tailscale": {
                 "enabled": ts_on,
-                "auth_key_env": "TAILSCALE_AUTHKEY",
+                "auth_key_env": self._get("tailscale", "auth_key_env", default="TAILSCALE_AUTHKEY"),
                 "advertise_exit_node": ts_on and self._checked("ts-exit"),
                 "ssh": ts_on and (ts_only or self._checked("ts-ssh")),
             },
             "updates": {
-                "auto_update_core": False,
-                "auto_update_apps": False,
-                "exclude_apps": [],
-                "backup_before": True,
+                "auto_update_core": self._get("updates", "auto_update_core", default=False),
+                "auto_update_apps": self._get("updates", "auto_update_apps", default=False),
+                "exclude_apps": self._get("updates", "exclude_apps", default=[]),
+                "backup_before": self._get("updates", "backup_before", default=True),
             },
             "notify": {
                 "urls": urls,
-                "webhook_url": None,
+                "webhook_url": self._get("notify", "webhook_url", default=None),
                 "notify_on_success": self._checked("notify-success"),
-                "notify_on_failure": True,
+                "notify_on_failure": self._get("notify", "notify_on_failure", default=True),
             },
             "_save_path": self._text("save-path"),
         }
 
     def on_mount(self) -> None:
-        self.query_one("#security-custom").display = False
-        self.query_one("#remotes", Vertical)
+        self.query_one("#security-custom").display = self.query_one("#security-preset", Select).value == "custom"
+        remotes = self.query_one("#remotes", Vertical)
+        for remote in self._get("backup", "remotes", default=[]):
+            remotes.mount(RemoteForm(initial=remote))
+        urls = self.query_one("#notify-urls", Vertical)
+        for url in self._get("notify", "urls", default=[]):
+            urls.mount(NotifyUrlRow(initial=url))
 
 
 def run_form_wizard(path: Optional[str] = None) -> Optional[Path]:
     """Run the form; write through config_wizard.write_config (same
-    round-trip validation as the classic wizard). Returns the written path,
-    or None when cancelled."""
-    default_dest = path or str(cw.default_config_path())
-    answers = ConfigFormApp(default_dest).run()
+    round-trip validation as the classic wizard). Pre-fills from an existing
+    config file when one is found. Returns the written path, or None when
+    cancelled."""
+    existing = cw.find_config_file(path)
+    initial = None
+    if existing is not None:
+        initial = yaml.safe_load(existing.read_text()) or {}
+        console.print(f"Editing existing config: [bold]{existing}[/bold]")
+    default_dest = str(existing) if existing else (path or str(cw.default_config_path()))
+
+    answers = ConfigFormApp(default_dest, initial=initial).run()
     if answers is None:
         console.print("[yellow]Aborted -- nothing written.[/yellow]")
         return None
 
     dest = Path(answers.pop("_save_path"))
-    if dest.exists() and not cw._ask_bool(f"{dest} already exists. Overwrite?", default=False):
+    # Overwriting the very file the form was pre-filled from is the point of
+    # edit mode -- only confirm when clobbering some *other* existing file.
+    if dest.exists() and dest != existing and not cw._ask_bool(f"{dest} already exists. Overwrite?", default=False):
         console.print("[yellow]Aborted -- nothing written.[/yellow]")
         return None
     cw.write_config(answers, dest)
