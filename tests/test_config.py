@@ -188,3 +188,21 @@ def test_host_label_override(tmp_path):
     """,
     )
     assert load_config(str(p)).host_label == "nas-primary"
+
+
+def test_rclone_remote_trailing_slash_stripped(tmp_path):
+    p = write_config(
+        tmp_path,
+        """
+        runtipi:
+          path: /opt/runtipi
+        backup:
+          remotes:
+            - name: proton
+              rclone_remote: "proton:backups/runtipi-companion/"
+              schedules:
+                daily:
+                  retention: 7
+    """,
+    )
+    assert load_config(str(p)).backup.remote("proton").rclone_remote == "proton:backups/runtipi-companion"

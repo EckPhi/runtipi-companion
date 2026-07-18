@@ -51,6 +51,9 @@ def _remotes_from_list(raw: Optional[list]) -> list:
         rclone_remote = item.get("rclone_remote")
         if not rclone_remote:
             raise ConfigError(f"Remote '{name}' is missing 'rclone_remote'")
+        # A trailing slash would produce double-slash paths once the host
+        # label (and store/app dirs) get appended.
+        rclone_remote = rclone_remote.rstrip("/")
         remotes.append(
             RemoteConfig(
                 name=name,

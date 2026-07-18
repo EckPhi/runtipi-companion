@@ -82,6 +82,8 @@ def _prompt_remote_details(taken_names: set, current: Optional[dict] = None) -> 
     rclone_remote = _ask(
         '  rclone target (e.g. "b2-runtipi:my-bucket/runtipi-backups")', default=cur.get("rclone_remote")
     )
+    # Trailing slash would double up once host/store/app get appended.
+    rclone_remote = (rclone_remote or "").strip().rstrip("/")
     if not rclone_remote:
         console.print("  [red]rclone target is required, skipping this remote.[/red]")
         return None
@@ -373,5 +375,8 @@ def run_config_wizard(path: Optional[str] = None) -> Optional[Path]:
 
     write_config(answers, dest)
     console.print(f"\n[green]Config written to {dest} and validated.[/green]")
-    console.print("Next: run [bold]runtipi-companion setup wizard[/bold] to bootstrap the system itself.")
+    console.print(
+        "Next: [bold]runtipi-companion setup --apply[/bold] bootstraps the system itself "
+        "(skip if a setup wizard continues right after this)."
+    )
     return dest

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from rich.console import Console
@@ -19,11 +20,23 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
     """
     console.print("[bold]Runtipi Companion setup wizard[/bold]")
 
+    # The uniform dry-run default surprises people mid-wizard ("I answered
+    # yes to the clone, why did nothing happen?"). Say so upfront, and on an
+    # interactive terminal offer to flip to apply mode right here -- the
+    # wizard confirms every step individually anyway.
+    if dry_run:
+        console.print("[yellow]Preview mode: commands are printed, nothing is changed (--dry-run default).[/yellow]")
+        if not assume_yes and sys.stdin.isatty() and confirm("Apply changes for real this run?", False):
+            dry_run = False
+
     runtipi_path = Path(cfg.runtipi.path)
     if not runtipi_path.exists():
         console.print(f"Runtipi path {runtipi_path} does not exist yet.")
         if confirm(f"Clone runtipi into {runtipi_path}?", assume_yes):
-            run(["git", "clone", "https://github.com/runtipi/runtipi.git", str(runtipi_path)], dry_run=dry_run)
+            # The clone runs for real even in dry-run mode: it only creates a
+            # new directory (nothing to preview, nothing overwritten), and
+            # every later step depends on the files actually existing.
+            run(["git", "clone", "https://github.com/runtipi/runtipi.git", str(runtipi_path)], dry_run=False)
         else:
             console.print("Skipping clone -- make sure runtipi.path in your config points at an existing install.")
             return
