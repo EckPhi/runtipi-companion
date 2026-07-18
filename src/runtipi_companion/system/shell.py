@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -47,9 +48,10 @@ def _should_stream(*, quiet: bool, interactive: bool, input: Optional[str]) -> b
 
 def _ensure_sudo_credentials(full_cmd: list) -> None:
     """Refresh sudo's credential cache on the real terminal BEFORE running a
-    sudo command in stream mode: the live tail repaints the screen, which
-    hides sudo's password prompt and looks like a freeze."""
-    if os.geteuid() == 0:
+    sudo command whose output is captured or repainted (stream tail hides
+    the password prompt; captured mode swallows it entirely) -- either way
+    it looks like a freeze."""
+    if os.geteuid() == 0 or not sys.stdin.isatty():
         return
     auth = subprocess.run(["sudo", "-v"])
     if auth.returncode != 0:
@@ -131,9 +133,14 @@ def run(
         if interactive:
             proc = subprocess.run(full_cmd, cwd=cwd)
             returncode, stdout, stderr = proc.returncode, "", ""
-        elif _should_stream(quiet=quiet, interactive=interactive, input=input):
-            if full_cmd[0] == "sudo":
-                _ensure_sudo_credentials(full_cmd)
+            if check and returncode != 0:
+                raise CommandError(full_cmd, returncode, "")
+            return RunResult(cmd=full_cmd, returncode=returncode, stdout="", stderr="", dry_run=False)
+        # Both non-interactive paths hide sudo's password prompt (stream
+        # repaints over it, capture swallows it) -- authenticate first.
+        if full_cmd[0] == "sudo":
+            _ensure_sudo_credentials(full_cmd)
+        if _should_stream(quiet=quiet, interactive=interactive, input=input):
             returncode, merged = _stream(full_cmd, cwd)
             # stderr was merged into the stream; expose the merged text on
             # both fields so failure paths that print .stderr still work.

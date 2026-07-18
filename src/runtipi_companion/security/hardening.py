@@ -15,6 +15,22 @@ console = Console()
 SSHD_CONFIG = Path("/etc/ssh/sshd_config")
 
 
+# Root-owned files under /etc must be touched through sudo'd commands, not
+# Python file I/O -- the CLI usually runs as a normal user.
+
+
+def _sudo_read(path: Path) -> str:
+    return run(["cat", str(path)], sudo=True, quiet=True).stdout
+
+
+def _sudo_write(path: Path, content: str) -> None:
+    run(["tee", str(path)], sudo=True, quiet=True, input=content)
+
+
+def _sudo_copy(src: Path, dst: Path) -> None:
+    run(["cp", "-a", str(src), str(dst)], sudo=True, quiet=True)
+
+
 def _current_user_has_authorized_keys() -> bool:
     """Safety check before we disable SSH password auth: make sure *some*
     account we plausibly connect as already has a key, otherwise we could
@@ -77,10 +93,10 @@ def harden_ssh(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
 
     backup_path = SSHD_CONFIG.with_suffix(".bak-runtipi-companion")
     if SSHD_CONFIG.exists() and not backup_path.exists():
-        shutil.copy2(SSHD_CONFIG, backup_path)
+        _sudo_copy(SSHD_CONFIG, backup_path)
         console.print(f"Backed up sshd_config to {backup_path}")
 
-    text = SSHD_CONFIG.read_text() if SSHD_CONFIG.exists() else ""
+    text = _sudo_read(SSHD_CONFIG) if SSHD_CONFIG.exists() else ""
     for key, value in changes:
         pattern = re.compile(rf"^\s*#?\s*{re.escape(key)}\s+.*$", re.MULTILINE)
         replacement = f"{key} {value}"
@@ -88,13 +104,13 @@ def harden_ssh(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
             text = pattern.sub(replacement, text)
         else:
             text = text.rstrip("\n") + f"\n{replacement}\n"
-    SSHD_CONFIG.write_text(text)
+    _sudo_write(SSHD_CONFIG, text)
 
     test_result = run(["sshd", "-t"], sudo=True, check=False)
     if not test_result.ok:
         # Roll back immediately -- a broken sshd_config can mean no more SSH access.
         if backup_path.exists():
-            shutil.copy2(backup_path, SSHD_CONFIG)
+            _sudo_copy(backup_path, SSHD_CONFIG)
         console.print(
             f"[red]sshd -t reported an invalid config, rolled back sshd_config. "
             f"Nothing was restarted.[/red]\n{test_result.stderr}"
@@ -170,7 +186,7 @@ def harden_fail2ban(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: b
         f"maxretry = {f2b_cfg.maxretry}\n"
         f"bantime = {f2b_cfg.bantime}\n"
     )
-    jail_local.write_text(content)
+    _sudo_write(jail_local, content)
     run(["systemctl", "enable", "--now", "fail2ban"], sudo=True)
     console.print("[green]fail2ban configured and running.[/green]")
 

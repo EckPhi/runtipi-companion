@@ -100,6 +100,7 @@ def test_stream_sudo_preauthenticates(monkeypatch):
 
     monkeypatch.setattr(shell, "_should_stream", lambda **k: True)
     monkeypatch.setattr(shell.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(shell.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
     monkeypatch.setattr(subprocess, "Popen", FakePopen)
 
@@ -118,6 +119,7 @@ def test_stream_sudo_auth_failure_raises(monkeypatch):
 
     monkeypatch.setattr(shell, "_should_stream", lambda **k: True)
     monkeypatch.setattr(shell.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(shell.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
     try:
         shell.run(["mkdir", "/opt/x"], sudo=True)

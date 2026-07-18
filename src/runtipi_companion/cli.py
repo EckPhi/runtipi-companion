@@ -554,7 +554,13 @@ def main() -> None:
     still traceback, because those are bugs worth reporting."""
     try:
         app()
-    except (CommandError, backup_mod.BackupRunError, backup_mod.BackupVerificationError, FileNotFoundError) as e:
+    except (
+        CommandError,
+        backup_mod.BackupRunError,
+        backup_mod.BackupVerificationError,
+        FileNotFoundError,
+        PermissionError,
+    ) as e:
         console.print(f"[red]{e}[/red]")
         raise SystemExit(1) from e
 
