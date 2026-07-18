@@ -188,3 +188,24 @@ def test_remote_without_schedule_gets_daily_fallback(monkeypatch):
     )
     remotes = config_wizard._prompt_remotes()
     assert remotes[0]["schedules"] == {"daily": {"retention": 14}}
+
+
+def test_needs_root(tmp_path, monkeypatch):
+    from runtipi_companion.setup.wizard import needs_root
+
+    # writable existing dir -> no elevation
+    assert needs_root(tmp_path / "new" / "deep" / "dir") is False
+    # unwritable nearest ancestor -> elevation (skip when running as root)
+    import os
+
+    if os.geteuid() != 0:
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        locked.chmod(0o555)
+        try:
+            assert needs_root(locked / "sub" / "dir") is True
+        finally:
+            locked.chmod(0o755)
+        # as root, never
+        monkeypatch.setattr(os, "geteuid", lambda: 0)
+        assert needs_root(locked / "sub") is False

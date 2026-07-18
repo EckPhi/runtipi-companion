@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,18 @@ from ..system.runtipi_cli import RuntipiCLI, RuntipiCLIError
 from ..system.shell import confirm, run
 
 console = Console()
+
+
+def needs_root(path: Path) -> bool:
+    """True when creating `path` requires elevation: we're not root and the
+    nearest existing ancestor isn't writable by us (the usual case for the
+    conventional /opt/runtipi tree)."""
+    if os.geteuid() == 0:
+        return False
+    current = path
+    while not current.exists():
+        current = current.parent
+    return not os.access(current, os.W_OK)
 
 
 def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool = False) -> None:
@@ -36,7 +49,14 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
             # The clone runs for real even in dry-run mode: it only creates a
             # new directory (nothing to preview, nothing overwritten), and
             # every later step depends on the files actually existing.
-            run(["git", "clone", "https://github.com/runtipi/runtipi.git", str(runtipi_path)], dry_run=False)
+            # sudo, because the runtipi tree conventionally lives root-owned
+            # under /opt (the official installer does the same, and every
+            # runtipi-cli call is already sudo'd).
+            run(
+                ["git", "clone", "https://github.com/runtipi/runtipi.git", str(runtipi_path)],
+                dry_run=False,
+                sudo=needs_root(runtipi_path),
+            )
         else:
             console.print("Skipping clone -- make sure runtipi.path in your config points at an existing install.")
             return
@@ -61,8 +81,12 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
         cli.start()
 
     if not dry_run:
-        Path(cfg.backup_local_path).mkdir(parents=True, exist_ok=True)
-        Path(cfg.backup.work_dir).mkdir(parents=True, exist_ok=True)
+        for directory in (cfg.backup_local_path, cfg.backup.work_dir):
+            path = Path(directory)
+            if needs_root(path):
+                run(["mkdir", "-p", str(path)], sudo=True)
+            else:
+                path.mkdir(parents=True, exist_ok=True)
     console.print(f"Backup directories ready: {cfg.backup_local_path}, {cfg.backup.work_dir}")
 
     if cfg.backup.remotes:
