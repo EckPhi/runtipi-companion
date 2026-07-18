@@ -242,18 +242,21 @@ def harden_tailscale_security(cfg: CompanionConfig, *, dry_run: bool = True, ass
 
 
 def status(cfg: CompanionConfig) -> None:
+    # interactive: these commands ARE the output -- captured mode would
+    # swallow everything and print nothing.
     console.print("[bold]Security status[/bold]")
     console.print("\n[bold]sshd effective config (password/root login):[/bold]")
     run(
         ["sh", "-c", "sshd -T 2>/dev/null | grep -E 'passwordauthentication|permitrootlogin|^port'"],
         sudo=True,
         check=False,
+        interactive=True,
     )
     console.print("\n[bold]UFW:[/bold]")
-    run(["ufw", "status", "verbose"], sudo=True, check=False)
+    run(["ufw", "status", "verbose"], sudo=True, check=False, interactive=True)
     console.print("\n[bold]fail2ban:[/bold]")
-    run(["systemctl", "is-active", "fail2ban"], check=False)
-    run(["fail2ban-client", "status", "sshd"], sudo=True, check=False)
+    run(["systemctl", "is-active", "fail2ban"], check=False, interactive=True)
+    run(["fail2ban-client", "status", "sshd"], sudo=True, check=False, interactive=True)
     if cfg.security.tailscale_only.enabled:
         console.print("\n[bold]Tailscale:[/bold]")
-        run(["tailscale", "status"], check=False)
+        run(["tailscale", "status"], check=False, interactive=True)

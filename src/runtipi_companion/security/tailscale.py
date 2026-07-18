@@ -58,4 +58,5 @@ def install_tailscale(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes:
 
 
 def status() -> None:
-    run(["tailscale", "status"], check=False)
+    # interactive: the command's output IS the result the user asked for.
+    run(["tailscale", "status"], check=False, interactive=True)
