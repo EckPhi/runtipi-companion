@@ -22,7 +22,8 @@ update) is a thin wrapper around it. What this tool adds:
   stores, and Runtipi core itself. By default a local pre-update snapshot
   of the affected apps is taken first (`updates.backup_before`), so every
   update is reversible via `restore run`.
-- **A config wizard** that runs on first start (or via `config wizard`):
+- **A config wizard** (terminal form with realtime validation, or classic
+  prompts) that runs on first start (or via `config wizard`):
   interviews you in the terminal and writes a validated config file.
 - **A setup wizard** for a fresh box: clone/verify the Runtipi install,
   locate `runtipi-cli` (it isn't on `$PATH` by default), run
@@ -100,12 +101,18 @@ uploads a config, and runs the setup/hardening steps non-interactively.
 ## Quickstart
 
 On a first run (no config file anywhere), any command offers to launch the
-interactive **config wizard**, which interviews you and writes a validated
-config file. You can also start it explicitly:
+interactive **config wizard**: a terminal form (text fields, checkboxes, a
+security-preset dropdown) with realtime per-field validation -- invalid
+paths, ports, rclone targets, and apprise URLs are flagged as you type.
+It writes a validated config file on save. Start it explicitly with:
 
 ```
-runtipi-companion config wizard
+runtipi-companion config wizard             # form UI
+runtipi-companion config wizard --classic   # question-by-question prompts
 ```
+
+(The classic prompt flow is also used automatically when stdin/stdout
+isn't a terminal.)
 
 Or go the manual route:
 
@@ -185,7 +192,7 @@ and prunes only its own subtree, and never touches another host's backups.
 ## Commands
 
 ```
-runtipi-companion config   wizard|init|show|validate|migrate
+runtipi-companion config   wizard|init|show|validate|migrate   # wizard: form UI, --classic for prompts
 runtipi-companion backup   run|list|remotes
 runtipi-companion restore  run|list
 runtipi-companion update   apps|core|appstores

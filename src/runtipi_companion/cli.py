@@ -25,7 +25,7 @@ from .system import version_check
 from .system.notify import notify, notify_test
 from .system.shell import CommandError
 from .system.shell import run as shell_run
-from .ui import config_wizard, tui
+from .ui import config_wizard, form_wizard, tui
 
 console = Console()
 
@@ -79,7 +79,7 @@ def _load(config_path: Optional[str]) -> CompanionConfig:
         if config_path is None and sys.stdin.isatty() and not any(p.exists() for p in DEFAULT_CONFIG_PATHS):
             console.print("[yellow]No config file found -- looks like a first run.[/yellow]")
             if typer.confirm("Run the config setup wizard now?", default=True):
-                written = config_wizard.run_config_wizard()
+                written = _run_any_config_wizard()
                 if written is not None:
                     return load_config(str(written))
         console.print(f"[red]{e}[/red]")
@@ -113,15 +113,25 @@ def config_init(
     console.print(f"Edit it, then run any command with --config {dest} (or move it to a default location).")
 
 
+def _run_any_config_wizard(path: Optional[str] = None, classic: bool = False):
+    """Form-based wizard (dropdown/checkboxes/realtime validation) on a real
+    terminal; the classic question-by-question flow otherwise or on request."""
+    if not classic and form_wizard.wizard_available():
+        return form_wizard.run_form_wizard(path)
+    return config_wizard.run_config_wizard(path)
+
+
 @config_app.command("wizard")
 def config_wizard_cmd(
     path: Optional[str] = typer.Option(
         None, "--path", help="Where to write the config file (default: asked interactively)."
     ),
+    classic: bool = typer.Option(False, "--classic", help="Question-by-question prompts instead of the form UI."),
 ):
-    """Interactive wizard that builds and writes a config file. Also offered
-    automatically on first run when no config exists."""
-    written = config_wizard.run_config_wizard(path)
+    """Interactive wizard that builds and writes a config file: a form with
+    text fields, checkboxes, and realtime validation (--classic for the old
+    prompt flow). Also offered automatically on first run."""
+    written = _run_any_config_wizard(path, classic=classic)
     if written is None:
         raise typer.Exit(1)
 
