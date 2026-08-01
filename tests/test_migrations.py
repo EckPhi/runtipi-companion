@@ -10,12 +10,20 @@ def test_migrate_v1_to_current():
     raw = {"runtipi": {"path": "/opt/runtipi"}}
     migrated, applied = migrate(raw)
     assert migrated["version"] == CONFIG_VERSION
-    assert applied == ["v1 -> v2"]
+    assert applied == ["v1 -> v2", "v2 -> v3"]
     assert migrated["notify"]["urls"] == []
     assert migrated["updates"]["backup_before"] is True
     assert migrated["backup"]["host_label"] is None
+    assert migrated["backup"]["app_settings"] == {}
     # input untouched (deepcopy)
     assert "version" not in raw
+
+
+def test_migrate_v2_to_current():
+    raw = {"version": 2, "runtipi": {"path": "/opt/runtipi"}}
+    migrated, applied = migrate(raw)
+    assert applied == ["v2 -> v3"]
+    assert migrated["backup"]["app_settings"] == {}
 
 
 def test_migrate_preserves_existing_values():
@@ -23,13 +31,14 @@ def test_migrate_preserves_existing_values():
         "version": 1,
         "notify": {"urls": ["ntfy://x/y"], "webhook_url": "https://h"},
         "updates": {"backup_before": False},
-        "backup": {"host_label": "nas"},
+        "backup": {"host_label": "nas", "app_settings": {"questdb": {"keep_running": True}}},
     }
     migrated, _ = migrate(raw)
     assert migrated["notify"]["urls"] == ["ntfy://x/y"]
     assert migrated["notify"]["webhook_url"] == "https://h"
     assert migrated["updates"]["backup_before"] is False
     assert migrated["backup"]["host_label"] == "nas"
+    assert migrated["backup"]["app_settings"] == {"questdb": {"keep_running": True}}
 
 
 def test_migrate_current_version_is_noop():

@@ -11,6 +11,7 @@ from .schema import (
     CONFIG_VERSION,
     DEFAULT_CONFIG_PATHS,
     VALID_SCHEDULES,
+    AppBackupConfig,
     BackupConfig,
     CompanionConfig,
     ConfigError,
@@ -67,6 +68,20 @@ def _remotes_from_list(raw: Optional[list]) -> list:
     return remotes
 
 
+def _app_settings_from_dict(raw: Optional[dict]) -> dict:
+    out = {}
+    for app_id, val in (raw or {}).items():
+        val = val or {}
+        out[app_id] = AppBackupConfig(
+            keep_running=val.get("keep_running"),
+            exclude_patterns=val.get("exclude_patterns"),
+            pre_backup_command=val.get("pre_backup_command"),
+            post_backup_command=val.get("post_backup_command"),
+            restore_command=val.get("restore_command"),
+        )
+    return out
+
+
 def load_config(path: Optional[str] = None) -> CompanionConfig:
     candidates = [Path(path)] if path else DEFAULT_CONFIG_PATHS
     chosen = next((p for p in candidates if p.exists()), None)
@@ -107,6 +122,7 @@ def load_config(path: Optional[str] = None) -> CompanionConfig:
             sleep_duration=b.get("sleep_duration", 10),
             schedules=schedules,
             remotes=_remotes_from_list(b.get("remotes", [])),
+            app_settings=_app_settings_from_dict(b.get("app_settings")),
         )
 
     if "security" in raw:

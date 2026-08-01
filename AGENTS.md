@@ -10,13 +10,15 @@ edge cases instead of cargo-culting the rule.
 
 Subpackages by concern, not by "everything flat":
 
-- `backup/` — runner, retention, restore, rclone client
+- `backup/` — runner, retention, restore, rclone client, app_settings
+  (per-app backup overrides: docker labels + config merge)
 - `config/` — schema (dataclasses), loader (YAML→dataclass), migrations,
   templates (bundled example config)
 - `security/` — hardening (SSH/UFW/fail2ban/lockdown), tailscale
 - `setup/` — first-run wizard, services (systemd), rclone setup
-- `system/` — shell (the `run()` wrapper everything goes through), notify,
-  runtipi_cli wrapper, version_check
+- `system/` — shell (the `run()` wrapper everything goes through), docker
+  (container id/labels/exec, no sudo), notify, runtipi_cli wrapper,
+  version_check
 - `ui/` — TUI bits: classic prompt wizard, form wizard (textual),
   validators, restore picker
 
@@ -131,6 +133,69 @@ If you touch `_backup_one_app` again: the restart guarantee lives in that
 `finally`, not in a plain statement after the archive step. Don't
 "simplify" it back to a flat sequence — that's exactly the shape that
 caused apps to be left down twice already.
+
+## Per-app backup settings: ordering and merge rules that matter
+
+`backup/app_settings.py` resolves docker labels + config.yaml's
+`backup.app_settings.<app_id>` into one `ResolvedAppSettings`. Two things
+that are easy to get wrong if you touch this again:
+
+- **Merge direction.** Every field in `AppBackupConfig` (the schema
+  dataclass) defaults to `None`, not a concrete falsy value, specifically
+  so `merge_overrides()` can tell "not set at this layer" apart from
+  "explicitly set to False/[]". Config file wins per-field; label fills in
+  what config doesn't set; hardcoded defaults (`False`, `[]`, `None`) only
+  apply if *neither* layer set that field. If you add a new field, give it
+  an `Optional[...] = None` default in the schema, not a concrete one, or
+  the merge silently breaks (a label override would look identical to "not
+  set" and never take effect).
+- **`pre_backup_command` runs BEFORE the stop/keep_running decision**, not
+  after. It needs a running container to `docker exec` into, so it always
+  runs first while the app is still up — then `effective_stop = stop and
+  not settings.keep_running` decides whether to stop it afterward. Don't
+  move the pre-backup hook after the stop step; it would then only ever
+  see a stopped container for the common (non-`keep_running`) case.
+- **`post_backup_command` lives in the SAME `finally` as the app restart,
+  and runs unconditionally** — after the restart-if-we-stopped-it step, so
+  the container is up again by the time it fires, and regardless of
+  whether the archive/verify succeeded or failed. This exists because of a
+  real requirement, not symmetry for its own sake: QuestDB's own backup
+  docs (https://questdb.com/docs/operations/backup/) say `CHECKPOINT
+  RELEASE` must run "regardless of whether the copy operation succeeded or
+  failed" after `CHECKPOINT CREATE` (`pre_backup_command`). Don't try to
+  fold this into `pre_backup_command` with a shell `&&`/`||` — that can't
+  express "always, even if the archive step in between crashed", only this
+  `finally` placement can. Re-checks real container state
+  (`is_app_running`) right before running, same as everywhere else here —
+  doesn't trust stale state from earlier in the function.
+- **`restore_command` runs AFTER the normal file restore and after the app
+  is restarted** (chosen deliberately as a *supplement*, not a replacement,
+  of the built-in restore — see the PR that added this if you're
+  reconsidering that). If the app wasn't running before the restore at all
+  (so the `stopped_by_us`-gated restart never fires), `restore_backup`
+  explicitly starts it before running `restore_command` — don't assume the
+  app is already up by the time you get there. QuestDB itself doesn't need
+  this hook (restoring is just putting `db`/`snapshot` back) — it's there
+  for apps that need an actual import step, e.g. loading a SQL dump.
+- A configured `pre_backup_command`/`post_backup_command`/`restore_command`
+  that can't run (app not running, container not resolvable) raises
+  `CommandError` rather than silently skipping — a configured hook that
+  never executes should be loud, not a quiet no-op that leaves e.g. a
+  database checkpoint never released.
+- Verify third-party product behavior against their own current docs
+  before writing an example config, not from memory/training data —
+  the first pass at the QuestDB example here used invented syntax
+  (`SNAPSHOT PREPARE`/`SNAPSHOT COMPLETE`, port 9003) that turned out to be
+  wrong on both the command names (real: `CHECKPOINT CREATE`/`CHECKPOINT
+  RELEASE`) and the port (real: 9000, QuestDB's default HTTP/REST port).
+  It also missed that RELEASE's "always run" requirement needed a feature
+  (`post_backup_command`) that didn't exist yet — caught only when the user
+  asked "does this actually work?" and pushed to check the real docs.
+- `system/docker.py`'s `container_id`/`read_labels` never use `sudo`,
+  matching `RuntipiCLI.is_app_running`'s existing (also sudo-less) `docker
+  ps` call — this assumes the invoking user is root or in the `docker`
+  group, same assumption the rest of the codebase already makes for docker
+  reads (only `runtipi-cli` itself is always sudo'd, see below).
 
 ## `tailscale up` vs `tailscale set`
 

@@ -53,7 +53,7 @@ mkdir -p "$REMOTE_DIR"
 
 say "Write config"
 cat > "$CFG" <<EOF
-version: 2
+version: 3
 runtipi:
   path: $RUNTIPI_DIR
   apps: [e2etest]

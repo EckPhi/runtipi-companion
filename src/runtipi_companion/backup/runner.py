@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tarfile
 import time
 import zlib
@@ -12,6 +13,7 @@ from rich.console import Console
 from ..config import CompanionConfig
 from ..system.runtipi_cli import RuntipiCLI
 from ..system.shell import CommandError
+from .app_settings import resolve_app_settings, run_app_command
 from .rclone import RcloneClient
 from .retention import select_prunable
 
@@ -81,11 +83,28 @@ def discover_apps(runtipi_path: str, allowlist: Optional[list] = None) -> list:
     return refs
 
 
-def _archive_app(runtipi_path: str, store: str, app_id: str, dest_file: Path) -> None:
+def _exclude_filter(patterns: list):
+    """tarfile.add's `filter` callback: drop members whose archived path
+    matches any of `patterns` (regex, searched -- not anchored)."""
+    if not patterns:
+        return None
+    compiled = [re.compile(p) for p in patterns]
+
+    def _filter(tarinfo):
+        return None if any(p.search(tarinfo.name) for p in compiled) else tarinfo
+
+    return _filter
+
+
+def _archive_app(
+    runtipi_path: str, store: str, app_id: str, dest_file: Path, exclude_patterns: Optional[list] = None
+) -> None:
     """Create a tar.gz containing the app's apps/, app-data/, and
     user-config/ directories (if present), same layout as the original
     bash script (app / app-data / user-config top-level members) so
-    restore can reverse it symmetrically.
+    restore can reverse it symmetrically. `exclude_patterns` (regex,
+    matched against the archived path, e.g. "app-data/.../cache/") drops
+    matching files/directories from the archive -- see AppBackupConfig.
     """
     app_paths = {
         Path(runtipi_path) / "apps" / store / app_id: "app",
@@ -93,10 +112,11 @@ def _archive_app(runtipi_path: str, store: str, app_id: str, dest_file: Path) ->
         Path(runtipi_path) / "user-config" / store / app_id: "user-config",
     }
     dest_file.parent.mkdir(parents=True, exist_ok=True)
+    tar_filter = _exclude_filter(exclude_patterns or [])
     with tarfile.open(dest_file, "w:gz", dereference=True) as tar:
         for src, arcname in app_paths.items():
             if src.is_dir():
-                tar.add(src, arcname=arcname)
+                tar.add(src, arcname=arcname, filter=tar_filter)
             elif arcname == "user-config":
                 pass  # user-config is optional, most apps don't have one
             else:
@@ -184,11 +204,28 @@ def _backup_one_app(
     app_backup_dir.mkdir(parents=True, exist_ok=True)
     dest_file = app_backup_dir / f"{ref.app_id}-{schedule}-{date_str}.tar.gz"
 
+    # Per-app override (docker labels + config.yaml's backup.app_settings)
+    # resolved up front: it decides whether we stop this app at all, and
+    # the pre-backup hook needs to run before that decision takes effect.
+    settings = resolve_app_settings(cfg, ref.app_id, ref.store)
+    effective_stop = stop and not settings.keep_running
+
     was_running = cli.is_app_running(ref.app_id, ref.store) if not dry_run else True
+
+    if settings.pre_backup_command:
+        run_app_command(
+            ref.app_id,
+            ref.store,
+            "pre_backup_command",
+            settings.pre_backup_command,
+            container_running=was_running,
+            dry_run=dry_run,
+        )
+
     stopped_by_us = False
     stop_error = None
 
-    if stop and was_running:
+    if effective_stop and was_running:
         console.print(f"Stopping {ref.ref}")
         try:
             cli.app_stop(ref.ref)
@@ -210,8 +247,10 @@ def _backup_one_app(
             stopped_by_us = True
             if not dry_run:
                 time.sleep(cfg.backup.sleep_duration)
-    elif stop:
+    elif effective_stop:
         console.print(f"{ref.ref} already stopped")
+    elif settings.keep_running and stop:
+        console.print(f"Keeping {ref.ref} running during backup (per-app override)")
 
     try:
         if stop_error is not None:
@@ -220,7 +259,7 @@ def _backup_one_app(
         console.print(f"Archiving {ref.ref} -> {dest_file}")
         verify_error = None
         if not dry_run:
-            _archive_app(cfg.runtipi.path, ref.store, ref.app_id, dest_file)
+            _archive_app(cfg.runtipi.path, ref.store, ref.app_id, dest_file, settings.exclude_patterns)
             try:
                 verify_archive(dest_file)
                 created_files.append(dest_file)
@@ -256,6 +295,22 @@ def _backup_one_app(
             cli.app_start(ref.ref)
             if not dry_run:
                 time.sleep(cfg.backup.sleep_duration)
+
+        if settings.post_backup_command:
+            # Also always runs, regardless of archive/verify success or
+            # failure -- some databases require an unconditional cleanup
+            # step here (e.g. QuestDB's CHECKPOINT RELEASE after CHECKPOINT
+            # CREATE, which its own docs say must run "regardless of
+            # whether the copy operation succeeded or failed").
+            container_running = cli.is_app_running(ref.app_id, ref.store) if not dry_run else True
+            run_app_command(
+                ref.app_id,
+                ref.store,
+                "post_backup_command",
+                settings.post_backup_command,
+                container_running=container_running,
+                dry_run=dry_run,
+            )
 
 
 def sync_to_remotes(

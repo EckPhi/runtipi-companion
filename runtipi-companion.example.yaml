@@ -3,7 +3,7 @@
 
 # Config schema version -- don't edit. 'runtipi-companion config migrate'
 # upgrades old files when a new companion version changes the schema.
-version: 2
+version: 3
 
 runtipi:
   path: /opt/runtipi
@@ -59,6 +59,27 @@ backup:
       schedules:
         weekly:
           retention: 4
+
+  # Per-app overrides, keyed by app id. Same fields can also be set as
+  # `runtipi-companion.backup.*` docker labels on the app's own container
+  # (keep-running/exclude/pre-command/post-command/restore-command,
+  # comma-separated for exclude) -- handy for setting defaults across many
+  # apps without editing this file. Whatever's set here wins over a label,
+  # field by field.
+  #
+  # Example: QuestDB's own zero-downtime checkpoint mechanism
+  # (https://questdb.com/docs/operations/backup/) instead of stopping it.
+  # CHECKPOINT RELEASE must run whether the backup succeeded or failed --
+  # post_backup_command always runs, unlike pre_backup_command/restore_command.
+  # app_settings:
+  #   questdb:
+  #     keep_running: true   # don't stop the container for this app's backups
+  #     exclude_patterns: []   # regex, matched against each archived member's path
+  #     pre_backup_command: >-
+  #       curl -sf -G --data-urlencode "query=CHECKPOINT CREATE" http://localhost:9000/exec
+  #     post_backup_command: >-
+  #       curl -sf -G --data-urlencode "query=CHECKPOINT RELEASE" http://localhost:9000/exec
+  app_settings: {}
 
 security:
   ssh:
