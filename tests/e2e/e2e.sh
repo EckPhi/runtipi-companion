@@ -133,6 +133,12 @@ echo "corrupted again" > "$RUNTIPI_DIR/app-data/migrated/e2etest/data.txt"
 grep -q "precious-data-v1" "$RUNTIPI_DIR/app-data/migrated/e2etest/data.txt" \
   || fail "remote restore did not bring app-data back"
 
+say "Restore multiple apps at once (--apps), each from its newest backup"
+echo "corrupted yet again" > "$RUNTIPI_DIR/app-data/migrated/e2etest/data.txt"
+"${RC[@]}" restore run --apps e2etest --config "$CFG" --apply --yes
+grep -q "precious-data-v1" "$RUNTIPI_DIR/app-data/migrated/e2etest/data.txt" \
+  || fail "'restore run --apps' did not bring app-data back"
+
 say "Update commands (dry-run)"
 "${RC[@]}" update apps --config "$CFG"
 "${RC[@]}" update appstores --config "$CFG"

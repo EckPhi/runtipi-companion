@@ -213,3 +213,66 @@ def test_interactive_restore_from_remote(tmp_path, monkeypatch):
     assert sel.app_id == "hello"
     assert sel.host == "boxb"
     assert sel.backup_file == "boxb/migrated/hello/hello-daily-2026-06-30.tar.gz"
+
+
+def test_interactive_restore_multi_local(tmp_path, monkeypatch):
+    root = make_local_backups(tmp_path)
+    cfg = load_cfg_with_backups(tmp_path, root)
+    # no remotes -> source auto-picked; select both apps ("all")
+    ScriptedPrompts(monkeypatch, ["all"])
+    sel = tui.interactive_restore_multi(cfg)
+    assert sel is not None
+    assert sorted(sel.app_ids) == ["hello", "world"]
+    assert sel.from_remote is None
+    assert sel.host is None
+
+
+def test_interactive_restore_multi_specific_selection(tmp_path, monkeypatch):
+    root = make_local_backups(tmp_path)
+    cfg = load_cfg_with_backups(tmp_path, root)
+    # apps listed alphabetically: 1=hello, 2=world -> pick just world
+    ScriptedPrompts(monkeypatch, ["2"])
+    sel = tui.interactive_restore_multi(cfg)
+    assert sel.app_ids == ["world"]
+
+
+def test_interactive_restore_multi_nothing_selected(tmp_path, monkeypatch):
+    root = make_local_backups(tmp_path)
+    cfg = load_cfg_with_backups(tmp_path, root)
+    ScriptedPrompts(monkeypatch, [""])
+    assert tui.interactive_restore_multi(cfg) is None
+
+
+def test_interactive_restore_multi_local_empty(tmp_path):
+    cfg = load_cfg_with_backups(tmp_path, tmp_path / "empty")
+    assert tui.interactive_restore_multi(cfg) is None
+
+
+def test_interactive_restore_multi_from_remote(tmp_path, monkeypatch):
+    root = make_local_backups(tmp_path)
+    cfg = load_cfg_with_backups(
+        tmp_path,
+        root,
+        remotes="""remotes:
+            - name: backblaze
+              rclone_remote: "b2:bucket/runtipi"
+              schedules:
+                daily:
+                  retention: 14
+          """,
+    )
+    monkeypatch.setattr(RcloneClient, "list_dirs", lambda self, remote: ["boxa"])
+    monkeypatch.setattr(
+        RcloneClient,
+        "list_files",
+        lambda self, remote: [
+            "migrated/hello/hello-daily-2026-06-30.tar.gz",
+            "migrated/world/world-weekly-2026-06-29.tar.gz",
+        ],
+    )
+    # source #2 (remote); host auto-picked (only "boxa"); select all apps
+    ScriptedPrompts(monkeypatch, [2, "all"])
+    sel = tui.interactive_restore_multi(cfg)
+    assert sel.from_remote == "backblaze"
+    assert sel.host == "boxa"
+    assert sorted(sel.app_ids) == ["hello", "world"]
