@@ -206,3 +206,52 @@ def test_rclone_remote_trailing_slash_stripped(tmp_path):
     """,
     )
     assert load_config(str(p)).backup.remote("proton").rclone_remote == "proton:backups/runtipi-companion"
+
+
+def test_app_settings_parsed(tmp_path):
+    p = write_config(
+        tmp_path,
+        """
+        runtipi:
+          path: /opt/runtipi
+        backup:
+          app_settings:
+            questdb:
+              keep_running: true
+              exclude_patterns:
+                - "\\\\.log$"
+              pre_backup_command: "snapshot prepare"
+              post_backup_command: "snapshot release"
+              restore_command: "snapshot complete"
+    """,
+    )
+    settings = load_config(str(p)).backup.app_settings["questdb"]
+    assert settings.keep_running is True
+    assert settings.exclude_patterns == ["\\.log$"]
+    assert settings.pre_backup_command == "snapshot prepare"
+    assert settings.post_backup_command == "snapshot release"
+    assert settings.restore_command == "snapshot complete"
+
+
+def test_app_settings_default_empty(tmp_path):
+    p = write_config(tmp_path, "runtipi:\n  path: /opt/runtipi\n")
+    assert load_config(str(p)).backup.app_settings == {}
+
+
+def test_app_settings_partial_override_leaves_rest_unset(tmp_path):
+    p = write_config(
+        tmp_path,
+        """
+        runtipi:
+          path: /opt/runtipi
+        backup:
+          app_settings:
+            questdb:
+              keep_running: true
+    """,
+    )
+    settings = load_config(str(p)).backup.app_settings["questdb"]
+    assert settings.keep_running is True
+    assert settings.exclude_patterns is None
+    assert settings.pre_backup_command is None
+    assert settings.post_backup_command is None

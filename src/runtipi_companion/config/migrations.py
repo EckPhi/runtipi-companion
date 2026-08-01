@@ -38,9 +38,22 @@ def _migrate_1_to_2(raw: dict) -> dict:
     return raw
 
 
+def _migrate_2_to_3(raw: dict) -> dict:
+    """v3 introduced per-app backup overrides (backup.app_settings.<app_id>:
+    keep_running, exclude_patterns, pre_backup_command, restore_command),
+    resolved together with matching `runtipi-companion.backup.*` docker
+    labels on the app's container. Additive -- make the (empty) section
+    explicit."""
+    backup = raw.get("backup") or {}
+    raw["backup"] = backup
+    backup.setdefault("app_settings", {})
+    return raw
+
+
 # version N -> the step that produces N+1
 MIGRATIONS = {
     1: _migrate_1_to_2,
+    2: _migrate_2_to_3,
 }
 
 

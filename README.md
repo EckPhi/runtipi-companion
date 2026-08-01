@@ -189,6 +189,49 @@ Local backups stay flat (`<backup dir>/<store>/<app>/...`); on every
 asks about it too). Several machines can share one remote bucket: each syncs
 and prunes only its own subtree, and never touches another host's backups.
 
+### Per-app backup settings
+
+Default backup behavior is stop the container, no filtering, plain
+app/app-data/user-config file copy for both backup and restore. Override
+that per app under `backup.app_settings.<app_id>` in config.yaml, or with
+`runtipi-companion.backup.*` docker labels on the app's own container --
+config file wins field-by-field when both are set, so labels work well as a
+fleet-wide default and config.yaml as the per-box exception.
+
+| config.yaml field | docker label | meaning |
+| --- | --- | --- |
+| `keep_running: true` | `runtipi-companion.backup.keep-running=true` | Don't stop this app's container for its backups. |
+| `exclude_patterns: [...]` | `runtipi-companion.backup.exclude=<comma-separated>` | Regex list; matching archive members (e.g. `app-data/.../cache/`) are left out. |
+| `pre_backup_command: "..."` | `runtipi-companion.backup.pre-command=...` | Runs via `docker exec` into the app's own container, before the stop/archive decision (so it always has a running container to reach). A failing command fails only that app's backup -- the app is never touched, since this runs before any stop. |
+| `post_backup_command: "..."` | `runtipi-companion.backup.post-command=...` | Runs via `docker exec` **unconditionally** after the archive attempt -- success or failure, same guarantee as the app restart. For cleanup a database's own docs require regardless of outcome (see QuestDB below). |
+| `restore_command: "..."` | `runtipi-companion.backup.restore-command=...` | Runs via `docker exec`, after the normal file restore and after the app is started -- for apps where the raw files aren't enough (e.g. a dump needs importing). |
+
+**Use case: zero-downtime QuestDB backups**, using its own
+[checkpoint mechanism](https://questdb.com/docs/operations/backup/#questdb-oss-manual-backups-with-checkpoints)
+instead of stopping the container:
+
+```yaml
+backup:
+  app_settings:
+    questdb:
+      keep_running: true
+      pre_backup_command: >-
+        curl -sf -G --data-urlencode "query=CHECKPOINT CREATE" http://localhost:9000/exec
+      post_backup_command: >-
+        curl -sf -G --data-urlencode "query=CHECKPOINT RELEASE" http://localhost:9000/exec
+```
+
+`CHECKPOINT CREATE` pauses WAL housekeeping and freezes the on-disk state
+QuestDB needs backed up (`db`, `snapshot`, and any other directories under
+its data root -- the default app/app-data/user-config archive already
+covers that) while the database keeps serving reads and writes; the normal
+archive step then captures a consistent copy. `CHECKPOINT RELEASE` must run
+afterward **no matter what** -- QuestDB's own docs are explicit that it has
+to fire whether the copy succeeded or failed, which is exactly why this is
+`post_backup_command` (unconditional) and not `pre_backup_command` again or
+a plain shell `&&`. No `restore_command` is needed here: restoring is just
+putting the backed-up directories back, same as any other app.
+
 ## Commands
 
 ```
@@ -330,6 +373,11 @@ runtipi-companion restore run jellyfin jellyfin-daily-2026-07-01.tar.gz \
 - Security hardening covers the concrete steps from Runtipi's own docs
   (SSH keys, UFW, fail2ban). It's not a substitute for reading those docs
   once yourself.
+- `pre_backup_command`/`post_backup_command`/`restore_command` (per-app
+  settings) run inside the app's container via `docker exec sh -c`, with
+  whatever privileges that container's default user has -- same trust
+  model as everything else in this config file (you write it, it runs
+  as-is, no sandboxing).
 
 ## Ideas for later (not built yet)
 

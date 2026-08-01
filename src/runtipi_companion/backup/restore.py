@@ -12,6 +12,7 @@ from rich.console import Console
 from ..config import CompanionConfig
 from ..system.runtipi_cli import RuntipiCLI
 from ..system.shell import CommandError, confirm, run
+from .app_settings import resolve_app_settings, run_app_command
 from .rclone import RcloneClient
 from .retention import select_latest
 
@@ -252,5 +253,26 @@ def restore_backup(
             cli.app_start(f"{app_id}:{store}")
             if not dry_run:
                 time.sleep(cfg.backup.sleep_duration)
+
+    settings = resolve_app_settings(cfg, app_id, store)
+    if settings.restore_command:
+        # A post-restore hook (e.g. importing a dump that landed via the
+        # file extraction above) needs the app running -- start it if the
+        # restart above didn't already (the app wasn't running before the
+        # restore at all).
+        container_running = cli.is_app_running(app_id, store) if not dry_run else True
+        if not container_running and not dry_run:
+            console.print(f"Starting {app_id}:{store} for restore_command")
+            cli.app_start(f"{app_id}:{store}")
+            time.sleep(cfg.backup.sleep_duration)
+            container_running = True
+        run_app_command(
+            app_id,
+            store,
+            "restore_command",
+            settings.restore_command,
+            container_running=container_running,
+            dry_run=dry_run,
+        )
 
     return True

@@ -13,7 +13,7 @@ DEFAULT_CONFIG_PATHS = [
 # Schema version written into config files as `version:`. Files without the
 # key are treated as version 1 (pre-versioning). Bump this together with a
 # new migration step in migrations.py whenever the config shape changes.
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 VALID_SCHEDULES = ("daily", "weekly", "monthly", "yearly")
 
@@ -49,6 +49,29 @@ class RuntipiConfig:
 
 
 @dataclass
+class AppBackupConfig:
+    """Per-app backup override for one app id, from backup.app_settings.<id>
+    in config.yaml and/or `runtipi-companion.backup.*` docker labels on the
+    app's container (see backup/app_settings.py for how the two merge --
+    config file wins per-field, labels fill in what config doesn't set).
+
+    Every field is Optional with a None default so "not set at this layer"
+    is distinguishable from "explicitly set to a falsy value" during that
+    merge; None always means "fall through to the next layer".
+    """
+
+    keep_running: Optional[bool] = None  # don't stop the container for this app's backups
+    exclude_patterns: Optional[list] = None  # regex list, matched against each archived member's path
+    pre_backup_command: Optional[str] = None  # `docker exec <container> sh -c <this>` before stop/archive
+    # `docker exec <container> sh -c <this>` ALWAYS runs after the archive
+    # attempt (success or failure -- same guarantee as the app restart),
+    # for cleanup steps a database's own docs may require unconditionally
+    # (e.g. QuestDB's CHECKPOINT RELEASE after CHECKPOINT CREATE).
+    post_backup_command: Optional[str] = None
+    restore_command: Optional[str] = None  # `docker exec <container> sh -c <this>` after a successful restore
+
+
+@dataclass
 class BackupConfig:
     work_dir: str = "/tmp/runtipi-companion"
     local_path: Optional[str] = None  # defaults to <runtipi.path>/backups
@@ -69,6 +92,7 @@ class BackupConfig:
         }
     )
     remotes: list = field(default_factory=list)  # list[RemoteConfig]
+    app_settings: dict = field(default_factory=dict)  # app_id -> AppBackupConfig
 
     def remote(self, name: str) -> Optional[RemoteConfig]:
         for r in self.remotes:
