@@ -185,51 +185,77 @@ def _backup_one_app(
     dest_file = app_backup_dir / f"{ref.app_id}-{schedule}-{date_str}.tar.gz"
 
     was_running = cli.is_app_running(ref.app_id, ref.store) if not dry_run else True
-    if stop:
-        if was_running:
-            console.print(f"Stopping {ref.ref}")
-            cli.app_stop(ref.ref)
-            if not dry_run:
-                time.sleep(cfg.backup.sleep_duration)
-        else:
-            console.print(f"{ref.ref} already stopped")
-
-    console.print(f"Archiving {ref.ref} -> {dest_file}")
-    verify_error = None
-    if not dry_run:
-        _archive_app(cfg.runtipi.path, ref.store, ref.app_id, dest_file)
-        try:
-            verify_archive(dest_file)
-            created_files.append(dest_file)
-        except BackupVerificationError as e:
-            # A corrupt archive must not survive (a later prune could
-            # delete an older good backup in its favor) and must not
-            # fail silently -- but restart the app first.
-            dest_file.unlink(missing_ok=True)
-            verify_error = e
-    else:
-        console.print(f"[yellow]DRY-RUN[/yellow] would create and verify {dest_file}")
-
-    if verify_error is None:
-        # Local retention: keep the `retention` most recent archives for
-        # this app+schedule, delete the rest.
-        existing = [p.name for p in app_backup_dir.glob(f"{ref.app_id}-{schedule}-*.tar.gz")]
-        prunable = select_prunable(existing, ref.app_id, schedule, retention)
-        for name in prunable:
-            target = app_backup_dir / name
-            console.print(f"Pruning old local backup {target}")
-            if not dry_run:
-                target.unlink(missing_ok=True)
+    stopped_by_us = False
+    stop_error = None
 
     if stop and was_running:
-        console.print(f"Starting {ref.ref}")
-        cli.app_start(ref.ref)
-        if not dry_run:
-            time.sleep(cfg.backup.sleep_duration)
+        console.print(f"Stopping {ref.ref}")
+        try:
+            cli.app_stop(ref.ref)
+        except CommandError as e:
+            # runtipi-cli can exit non-zero for reasons unrelated to whether
+            # the containers actually stopped (seen in the wild: a RabbitMQ
+            # event-publish failure on a healthy stop). Check real container
+            # state via docker directly instead of trusting the exit code --
+            # otherwise a cosmetic CLI error leaves the app stopped forever
+            # (we'd bail out here and never reach app_start below).
+            if dry_run or cli.is_app_running(ref.app_id, ref.store):
+                stop_error = e
+            else:
+                console.print(
+                    f"[yellow]runtipi-cli reported an error stopping {ref.ref}, but the containers "
+                    f"are actually stopped -- continuing (will still restart it).[/yellow]\n{e}"
+                )
+        if stop_error is None:
+            stopped_by_us = True
+            if not dry_run:
+                time.sleep(cfg.backup.sleep_duration)
+    elif stop:
+        console.print(f"{ref.ref} already stopped")
 
-    if verify_error is not None:
-        console.print("Deleted the corrupt archive.")
-        raise verify_error
+    try:
+        if stop_error is not None:
+            raise stop_error
+
+        console.print(f"Archiving {ref.ref} -> {dest_file}")
+        verify_error = None
+        if not dry_run:
+            _archive_app(cfg.runtipi.path, ref.store, ref.app_id, dest_file)
+            try:
+                verify_archive(dest_file)
+                created_files.append(dest_file)
+            except BackupVerificationError as e:
+                # A corrupt archive must not survive (a later prune could
+                # delete an older good backup in its favor) and must not
+                # fail silently -- but restart the app first (the outer
+                # finally below handles that).
+                dest_file.unlink(missing_ok=True)
+                verify_error = e
+        else:
+            console.print(f"[yellow]DRY-RUN[/yellow] would create and verify {dest_file}")
+
+        if verify_error is None:
+            # Local retention: keep the `retention` most recent archives for
+            # this app+schedule, delete the rest.
+            existing = [p.name for p in app_backup_dir.glob(f"{ref.app_id}-{schedule}-*.tar.gz")]
+            prunable = select_prunable(existing, ref.app_id, schedule, retention)
+            for name in prunable:
+                target = app_backup_dir / name
+                console.print(f"Pruning old local backup {target}")
+                if not dry_run:
+                    target.unlink(missing_ok=True)
+        else:
+            console.print("Deleted the corrupt archive.")
+            raise verify_error
+    finally:
+        # Always attempt to restart an app we actually stopped, no matter
+        # what happened in between (archive error, verify failure, ...) --
+        # an app left down after a backup run is worse than a failed backup.
+        if stopped_by_us:
+            console.print(f"Starting {ref.ref}")
+            cli.app_start(ref.ref)
+            if not dry_run:
+                time.sleep(cfg.backup.sleep_duration)
 
 
 def sync_to_remotes(

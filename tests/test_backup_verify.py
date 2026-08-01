@@ -129,6 +129,146 @@ def test_run_backup_continues_past_failing_app(tmp_path, monkeypatch):
     assert broken == [], "broken app must not produce an archive after its stop failed"
 
 
+def test_run_backup_restarts_app_when_stop_command_lies(tmp_path, monkeypatch):
+    """Real-world case: runtipi-cli's 'app stop' can exit non-zero for a
+    reason unrelated to the actual docker stop (seen live: a RabbitMQ
+    event-publish failure on an otherwise-healthy stop). If the containers
+    are actually down afterward, we must still archive AND restart the app
+    -- not leave it stopped because we trusted a misleading exit code.
+    """
+
+    from runtipi_companion.backup import runner
+    from runtipi_companion.backup.runner import run_backup
+    from runtipi_companion.config import CompanionConfig
+    from runtipi_companion.system.shell import CommandError
+
+    runtipi = tmp_path / "runtipi"
+    app_dir = runtipi / "apps" / "migrated" / "gitea"
+    app_dir.mkdir(parents=True)
+    (runtipi / "app-data" / "migrated" / "gitea").mkdir(parents=True)
+    (runtipi / "app-data" / "migrated" / "gitea" / "data.txt").write_text("hi")
+
+    class StubCLI:
+        def __init__(self, *a, **k):
+            self.cli_path = "/stub"
+            self.stop_calls = 0
+            self.start_calls = 0
+
+        def is_app_running(self, app_id, store):
+            # First check (before stop): running. Every check after the
+            # failed stop call: actually stopped, mirroring dockerd's real
+            # state despite runtipi-cli's misleading non-zero exit.
+            return self.stop_calls == 0
+
+        def app_stop(self, ref):
+            self.stop_calls += 1
+            raise CommandError(["runtipi-cli", "app", "stop", ref], 1, "rabbitmq exploded")
+
+        def app_start(self, ref):
+            self.start_calls += 1
+
+    stub = StubCLI()
+    monkeypatch.setattr(runner, "RuntipiCLI", lambda *a, **k: stub)
+
+    cfg = CompanionConfig()
+    cfg.runtipi.path = str(runtipi)
+    cfg.backup.local_path = str(tmp_path / "backups")
+    cfg.backup.sleep_duration = 0
+
+    created = run_backup(cfg, "daily", local_only=True)  # must NOT raise
+
+    assert len(created) == 1, "archive should still be created despite the noisy exit code"
+    assert stub.start_calls == 1, "the app must be restarted after a false-failure stop"
+
+
+def test_run_backup_skips_archive_when_stop_genuinely_fails(tmp_path, monkeypatch):
+    """Counterpart to the false-failure case: if the app is confirmed still
+    running after 'app stop' errors, that's a real failure -- no archive,
+    and nothing to restart (it was never actually stopped)."""
+    import pytest as _pytest
+
+    from runtipi_companion.backup import runner
+    from runtipi_companion.backup.runner import BackupRunError, run_backup
+    from runtipi_companion.config import CompanionConfig
+    from runtipi_companion.system.shell import CommandError
+
+    runtipi = tmp_path / "runtipi"
+    (runtipi / "apps" / "migrated" / "gitea").mkdir(parents=True)
+    (runtipi / "app-data" / "migrated" / "gitea").mkdir(parents=True)
+
+    class StubCLI:
+        def __init__(self, *a, **k):
+            self.cli_path = "/stub"
+            self.start_calls = 0
+
+        def is_app_running(self, app_id, store):
+            return True  # still running no matter what we try
+
+        def app_stop(self, ref):
+            raise CommandError(["runtipi-cli", "app", "stop", ref], 1, "genuinely stuck")
+
+        def app_start(self, ref):
+            self.start_calls += 1
+
+    stub = StubCLI()
+    monkeypatch.setattr(runner, "RuntipiCLI", lambda *a, **k: stub)
+
+    cfg = CompanionConfig()
+    cfg.runtipi.path = str(runtipi)
+    cfg.backup.local_path = str(tmp_path / "backups")
+    cfg.backup.sleep_duration = 0
+
+    with _pytest.raises(BackupRunError):
+        run_backup(cfg, "daily", local_only=True)
+
+    assert stub.start_calls == 0, "nothing to restart -- the app was never actually stopped"
+    archives = list((tmp_path / "backups" / "migrated" / "gitea").glob("*.tar.gz"))
+    assert archives == []
+
+
+def test_run_backup_restarts_app_even_if_archiving_crashes(tmp_path, monkeypatch):
+    """Any failure between a successful stop and the end of the app's
+    backup (not just a stop-command failure) must still restart the app --
+    previously an archiving error left the app stopped indefinitely too."""
+    import pytest as _pytest
+
+    from runtipi_companion.backup import runner
+    from runtipi_companion.backup.runner import run_backup
+    from runtipi_companion.config import CompanionConfig
+
+    runtipi = tmp_path / "runtipi"
+    (runtipi / "apps" / "migrated" / "gitea").mkdir(parents=True)
+    (runtipi / "app-data" / "migrated" / "gitea").mkdir(parents=True)
+
+    class StubCLI:
+        def __init__(self, *a, **k):
+            self.cli_path = "/stub"
+            self.start_calls = 0
+
+        def is_app_running(self, app_id, store):
+            return True
+
+        def app_stop(self, ref):
+            pass  # succeeds cleanly
+
+        def app_start(self, ref):
+            self.start_calls += 1
+
+    stub = StubCLI()
+    monkeypatch.setattr(runner, "RuntipiCLI", lambda *a, **k: stub)
+    monkeypatch.setattr(runner, "_archive_app", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+
+    cfg = CompanionConfig()
+    cfg.runtipi.path = str(runtipi)
+    cfg.backup.local_path = str(tmp_path / "backups")
+    cfg.backup.sleep_duration = 0
+
+    with _pytest.raises(OSError):
+        run_backup(cfg, "daily", local_only=True)
+
+    assert stub.start_calls == 1, "app must be restarted even when archiving itself crashes"
+
+
 def test_sync_only_copies_current_schedule(monkeypatch):
     """The remote sync must be filtered to the schedule being synced --
     other schedules' archives and local-only pre-update snapshots must not
