@@ -211,6 +211,43 @@ def test_post_backup_command_runs_even_when_verify_fails(tmp_path, monkeypatch):
     assert calls == ["post_backup_command"], "must still run despite the verify failure"
 
 
+def test_post_backup_command_runs_even_when_restart_fails(tmp_path, monkeypatch):
+    """A restart failure (app_start blowing up) must not skip the
+    unconditional post_backup_command guarantee, and the restart failure
+    itself must still be surfaced (not swallowed by the hook running)."""
+    runtipi = _seed(tmp_path)
+    cfg = _cfg(tmp_path, runtipi)
+    stub = StubCLI()
+
+    def failing_start(ref):
+        stub.start_calls.append(ref)
+        raise CommandError(["runtipi-cli", "app", "start", ref], 1, "boom")
+
+    stub.app_start = failing_start
+    calls = []
+    monkeypatch.setattr(runner, "RuntipiCLI", lambda *a, **k: stub)
+    monkeypatch.setattr(
+        runner,
+        "resolve_app_settings",
+        lambda cfg, app_id, store: app_settings_mod.ResolvedAppSettings(post_backup_command="CHECKPOINT RELEASE"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "run_app_command",
+        lambda app_id, store, kind, command, *, container_running, dry_run: calls.append(
+            (kind, command, container_running)
+        ),
+    )
+
+    with pytest.raises(runner.BackupRunError, match="questdb"):
+        runner.run_backup(cfg, "daily", local_only=True)
+
+    assert stub.start_calls == ["questdb:migrated"], "restart must still be attempted"
+    assert calls == [
+        ("post_backup_command", "CHECKPOINT RELEASE", False)
+    ], "post_backup_command must still run even though the restart failed (container correctly reported as not running)"
+
+
 def test_post_backup_command_after_restart_when_app_was_stopped(tmp_path, monkeypatch):
     """With keep_running=False (default), the app gets stopped for the
     archive -- post_backup_command must run only after it's back up."""

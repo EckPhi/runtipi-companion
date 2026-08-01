@@ -290,18 +290,28 @@ def _backup_one_app(
         # Always attempt to restart an app we actually stopped, no matter
         # what happened in between (archive error, verify failure, ...) --
         # an app left down after a backup run is worse than a failed backup.
+        # The restart itself must not be able to skip post_backup_command
+        # below (that hook has its own unconditional guarantee to keep, see
+        # the comment on it) -- so a restart failure is caught, printed, and
+        # re-raised only AFTER post_backup_command has had its chance to run.
+        restart_error = None
         if stopped_by_us:
             console.print(f"Starting {ref.ref}")
-            cli.app_start(ref.ref)
-            if not dry_run:
-                time.sleep(cfg.backup.sleep_duration)
+            try:
+                cli.app_start(ref.ref)
+                if not dry_run:
+                    time.sleep(cfg.backup.sleep_duration)
+            except CommandError as e:
+                restart_error = e
+                console.print(f"[red]Failed to restart {ref.ref}: {e}[/red]")
 
         if settings.post_backup_command:
-            # Also always runs, regardless of archive/verify success or
+            # Always runs, regardless of archive/verify/restart success or
             # failure -- some databases require an unconditional cleanup
             # step here (e.g. QuestDB's CHECKPOINT RELEASE after CHECKPOINT
             # CREATE, which its own docs say must run "regardless of
-            # whether the copy operation succeeded or failed").
+            # whether the copy operation succeeded or failed"). Re-checked
+            # against real container state, not the restart's outcome above.
             container_running = cli.is_app_running(ref.app_id, ref.store) if not dry_run else True
             run_app_command(
                 ref.app_id,
@@ -311,6 +321,9 @@ def _backup_one_app(
                 container_running=container_running,
                 dry_run=dry_run,
             )
+
+        if restart_error is not None:
+            raise restart_error
 
 
 def sync_to_remotes(
