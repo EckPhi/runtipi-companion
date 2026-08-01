@@ -11,11 +11,17 @@ from rich.console import Console
 
 from ..config import CompanionConfig
 from ..system.runtipi_cli import RuntipiCLI
-from ..system.shell import confirm, run
+from ..system.shell import CommandError, confirm, run
 from .rclone import RcloneClient
 from .retention import select_latest
 
 console = Console()
+
+
+class RestoreRunError(RuntimeError):
+    """One or more apps failed while restoring a batch. Restoring continues
+    past a single app's failure so a comma-separated batch is best-effort,
+    not all-or-nothing; raised at the end with a summary."""
 
 
 def list_local_backups(cfg: CompanionConfig, app_id: str, store: Optional[str] = None) -> list:
@@ -68,6 +74,68 @@ def latest_per_app(files: list) -> list:
     return out
 
 
+def _latest_by_app_id(cfg: CompanionConfig, *, from_remote: Optional[str] = None, host: Optional[str] = None) -> dict:
+    """{app_id: (store, filename)} for every app's newest archive, local or
+    from one host's subtree of a remote. If an app id exists under more
+    than one store, the last one wins -- restore a specific store's copy
+    with a single-app `restore run --store` instead."""
+    if from_remote:
+        files = _remote_files(cfg, from_remote, host or cfg.host_label)
+    else:
+        root = Path(cfg.backup_local_path)
+        files = [str(p.relative_to(root)) for p in root.glob("*/*/*.tar.gz")]
+    return {app_id: (store, filename) for store, app_id, filename in latest_per_app(files)}
+
+
+def restore_apps(
+    cfg: CompanionConfig,
+    app_ids: list,
+    *,
+    from_remote: Optional[str] = None,
+    host: Optional[str] = None,
+    assume_yes: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Restore several apps at once, each from its newest backup. Mirrors
+    run_backup's per-app isolation: one app's failure doesn't cancel the
+    rest of the batch, and RestoreRunError is raised at the end with a
+    summary so the exit code reflects any failure.
+
+    Returns {"restored": [...], "skipped": [...], "failed": [...]} (ids).
+    A "skip" is the user declining that app's overwrite confirmation --
+    not a failure.
+    """
+    latest = _latest_by_app_id(cfg, from_remote=from_remote, host=host)
+    missing = [a for a in app_ids if a not in latest]
+    if missing:
+        raise ValueError(
+            f"No backup found for: {', '.join(missing)}. "
+            f"Run 'runtipi-companion backup list{f' --remote {from_remote}' if from_remote else ''}' "
+            f"to see what's available."
+        )
+
+    restored, skipped, failed = [], [], []
+    for app_id in app_ids:
+        store, filename = latest[app_id]
+        try:
+            if restore_backup(
+                cfg, store, app_id, filename, from_remote=from_remote, host=host, assume_yes=assume_yes, dry_run=dry_run
+            ):
+                restored.append(app_id)
+            else:
+                skipped.append(app_id)
+        except Exception as e:
+            console.print(f"[red]Restore of {app_id}:{store} failed:[/red] {e}")
+            failed.append(app_id)
+
+    console.print(
+        f"\n[bold]Restore summary:[/bold] {len(restored)} restored, {len(skipped)} skipped, {len(failed)} failed"
+    )
+    if failed:
+        raise RestoreRunError(f"{len(failed)} of {len(app_ids)} restore(s) failed ({', '.join(failed)}).")
+    return {"restored": restored, "skipped": skipped, "failed": failed}
+
+
 def restore_backup(
     cfg: CompanionConfig,
     store: str,
@@ -78,7 +146,7 @@ def restore_backup(
     host: Optional[str] = None,
     assume_yes: bool = False,
     dry_run: bool = False,
-) -> None:
+) -> bool:
     """Restore a single app from a runtipi-companion backup archive.
 
     This reverses `_archive_app` in runner.py: extracts the app/app-data/
@@ -90,6 +158,9 @@ def restore_backup(
     to download from (default: this machine's own label). Restoring another
     box's remote backups onto this one is the supported migration path. A
     host-prefixed remote-relative path in `backup_file` wins over `host`.
+
+    Returns True if the app was restored (or would be, in dry-run), False
+    if the user declined the confirmation.
     """
     cli = RuntipiCLI(cfg.runtipi.path, cfg.runtipi.cli_path, dry_run=dry_run)
 
@@ -123,41 +194,63 @@ def restore_backup(
     )
     if not confirm(f"Restore {app_id}:{store} from {Path(backup_file).name}?", assume_yes=dry_run or assume_yes):
         console.print("Aborted.")
-        return
+        return False
 
     was_running = cli.is_app_running(app_id, store) if not dry_run else True
+    stopped_by_us = False
     if was_running:
         console.print(f"Stopping {app_id}:{store}")
-        cli.app_stop(f"{app_id}:{store}")
+        try:
+            cli.app_stop(f"{app_id}:{store}")
+        except CommandError as e:
+            # runtipi-cli can exit non-zero for reasons unrelated to whether
+            # the containers actually stopped (e.g. a RabbitMQ event-publish
+            # failure on an otherwise-healthy stop -- see backup/runner.py's
+            # identical handling). Check real container state before
+            # trusting the exit code, or a cosmetic error here means we
+            # never reach app_start below and leave the app down.
+            if dry_run or cli.is_app_running(app_id, store):
+                raise
+            console.print(
+                f"[yellow]runtipi-cli reported an error stopping {app_id}:{store}, but the containers "
+                f"are actually stopped -- continuing (will still restart it).[/yellow]\n{e}"
+            )
+        stopped_by_us = True
         if not dry_run:
             time.sleep(cfg.backup.sleep_duration)
 
-    dest_map = {
-        "app": Path(cfg.runtipi.path) / "apps" / store / app_id,
-        "app-data": Path(cfg.runtipi.path) / "app-data" / store / app_id,
-        "user-config": Path(cfg.runtipi.path) / "user-config" / store / app_id,
-    }
+    try:
+        dest_map = {
+            "app": Path(cfg.runtipi.path) / "apps" / store / app_id,
+            "app-data": Path(cfg.runtipi.path) / "app-data" / store / app_id,
+            "user-config": Path(cfg.runtipi.path) / "user-config" / store / app_id,
+        }
 
-    if dry_run:
-        console.print(f"[yellow]DRY-RUN[/yellow] would extract {archive_path} and replace:")
-        for dest in dest_map.values():
-            console.print(f"  {dest}")
-    else:
-        with tempfile.TemporaryDirectory() as tmp:
-            with tarfile.open(archive_path, "r:gz") as tar:
-                tar.extractall(path=tmp)
-            for arcname, dest in dest_map.items():
-                src = Path(tmp) / arcname
-                if not src.exists():
-                    continue
-                if dest.exists():
-                    shutil.rmtree(dest)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(src), str(dest))
-        console.print(f"[green]Restored {app_id}:{store} from {Path(backup_file).name}[/green]")
+        if dry_run:
+            console.print(f"[yellow]DRY-RUN[/yellow] would extract {archive_path} and replace:")
+            for dest in dest_map.values():
+                console.print(f"  {dest}")
+        else:
+            with tempfile.TemporaryDirectory() as tmp:
+                with tarfile.open(archive_path, "r:gz") as tar:
+                    tar.extractall(path=tmp)
+                for arcname, dest in dest_map.items():
+                    src = Path(tmp) / arcname
+                    if not src.exists():
+                        continue
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(src), str(dest))
+            console.print(f"[green]Restored {app_id}:{store} from {Path(backup_file).name}[/green]")
+    finally:
+        # Always attempt to restart an app we actually stopped, no matter
+        # what happened in between -- an app left down after a restore is
+        # worse than a failed restore.
+        if stopped_by_us:
+            console.print(f"Starting {app_id}:{store}")
+            cli.app_start(f"{app_id}:{store}")
+            if not dry_run:
+                time.sleep(cfg.backup.sleep_duration)
 
-    if was_running:
-        console.print(f"Starting {app_id}:{store}")
-        cli.app_start(f"{app_id}:{store}")
-        if not dry_run:
-            time.sleep(cfg.backup.sleep_duration)
+    return True

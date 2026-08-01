@@ -48,6 +48,10 @@ class RuntipiCLI:
         )
 
     def _run(self, args: list, **kwargs) -> RunResult:
+        # Every runtipi-cli command needs root: the official installer
+        # leaves /opt/runtipi (compose files, app data) root-owned and
+        # runtipi-cli itself talks to the docker socket -- runtipi's own
+        # docs prefix every invocation with sudo for the same reason.
         return run([self.cli_path, *args], sudo=True, dry_run=self.dry_run, **kwargs)
 
     # --- core ---

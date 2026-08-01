@@ -286,22 +286,51 @@ def backup_remotes(config: Optional[str] = ConfigOption):
 def restore_run(
     app_id: Optional[str] = typer.Argument(None, help="App id. Omit (with no backup file) to pick interactively."),
     backup_file: Optional[str] = typer.Argument(None, help="Filename as shown by 'backup list' (or 'restore list')."),
-    store: str = typer.Option("migrated", "--store", help="App store name (see 'runtipi-cli installed')."),
+    apps: Optional[str] = typer.Option(
+        None,
+        "--apps",
+        help="Comma-separated app ids to restore at once, each from its newest backup. "
+        "Can't be combined with APP_ID/BACKUP_FILE.",
+    ),
+    store: str = typer.Option(
+        "migrated", "--store", help="App store name (see 'runtipi-cli installed'). Ignored with --apps."
+    ),
     from_remote: Optional[str] = typer.Option(None, "--from-remote", help="Download from this remote first."),
     host: Optional[str] = HostOption,
     config: Optional[str] = ConfigOption,
     yes: bool = YesOption,
     dry_run: bool = DryRunOption,
 ):
-    """Restore an app. --from-remote with --host restores another machine's
-    remote backup onto this one (migration path); the interactive picker
-    offers every host it finds on the chosen remote."""
+    """Restore one app, or several at once with --apps (each from its
+    newest backup; one app's failure doesn't cancel the rest of the batch).
+    --from-remote with --host restores another machine's remote backup onto
+    this one (migration path); the interactive picker (no arguments) offers
+    a one-app or multi-select flow."""
     _require_remote_for_host(host, from_remote)
     cfg = _load(config)
+
+    if apps:
+        if app_id is not None or backup_file is not None:
+            console.print("[red]--apps can't be combined with APP_ID/BACKUP_FILE.[/red]")
+            raise typer.Exit(1)
+        app_list = [a.strip() for a in apps.split(",") if a.strip()]
+        restore_mod.restore_apps(cfg, app_list, from_remote=from_remote, host=host, assume_yes=yes, dry_run=dry_run)
+        return
+
     if app_id is None or backup_file is None:
         if not sys.stdin.isatty():
-            console.print("[red]APP_ID and BACKUP_FILE are required when not running interactively.[/red]")
+            console.print(
+                "[red]APP_ID and BACKUP_FILE are required when not running interactively (or use --apps).[/red]"
+            )
             raise typer.Exit(1)
+        if tui.pick("Restore how many apps", ["one app", "several apps at once"]) == 1:
+            multi = tui.interactive_restore_multi(cfg)
+            if multi is None:
+                raise typer.Exit(1)
+            restore_mod.restore_apps(
+                cfg, multi.app_ids, from_remote=multi.from_remote, host=multi.host, assume_yes=yes, dry_run=dry_run
+            )
+            return
         selection = tui.interactive_restore(cfg)
         if selection is None:
             raise typer.Exit(1)
@@ -558,6 +587,7 @@ def main() -> None:
         CommandError,
         backup_mod.BackupRunError,
         backup_mod.BackupVerificationError,
+        restore_mod.RestoreRunError,
         FileNotFoundError,
         PermissionError,
     ) as e:

@@ -290,6 +290,21 @@ runtipi-companion restore run jellyfin jellyfin-daily-2026-07-01.tar.gz --from-r
 
 Omit `--from-remote` to restore from the local backup directory instead.
 
+Restore **several apps at once**, each from its own newest backup, with
+`--apps` (comma-separated) or the interactive picker's multi-select:
+
+```
+runtipi-companion restore run --apps jellyfin,grafana,grist --apply
+runtipi-companion restore run --apps jellyfin,grafana --from-remote backblaze --apply
+runtipi-companion restore run    # interactive: choose "several apps at once"
+```
+
+One app's failure doesn't cancel the rest of the batch -- failures are
+reported in a summary and the command exits non-zero if any app failed.
+(An app id that exists under more than one store restores whichever store's
+copy is newest; use the single-app form with `--store` to pick a specific
+one.)
+
 Restoring **another machine's** remote backups (migration path): pass
 `--host` with that machine's label alongside `--from-remote`, or use the
 interactive picker (`restore run` with no arguments), which lists every host

@@ -15,6 +15,7 @@ from typing import Optional
 from rich.console import Console
 
 from ..backup.rclone import RcloneClient
+from ..backup.restore import latest_per_app
 from ..config import CompanionConfig
 from . import config_wizard as cw
 
@@ -26,6 +27,13 @@ class RestoreSelection:
     store: str
     app_id: str
     backup_file: str  # filename for local, remote-relative path for remotes
+    from_remote: Optional[str] = None
+    host: Optional[str] = None  # remote restores only: which machine's subtree it came from
+
+
+@dataclass
+class MultiRestoreSelection:
+    app_ids: list
     from_remote: Optional[str] = None
     host: Optional[str] = None  # remote restores only: which machine's subtree it came from
 
@@ -147,3 +155,47 @@ def interactive_restore(cfg: CompanionConfig) -> Optional[RestoreSelection]:
         return None
     (store, app_id), remote_path = _pick_app_and_file(archives)
     return RestoreSelection(store=store, app_id=app_id, backup_file=remote_path, from_remote=remote.name, host=host)
+
+
+def interactive_restore_multi(cfg: CompanionConfig) -> Optional[MultiRestoreSelection]:
+    """Pick a source, then choose any number of apps via checklist; each is
+    restored from its newest archive (backup.restore_apps resolves which
+    one). Returns None when there is nothing to restore from the chosen
+    source or nothing gets selected."""
+    console.print("[bold]Restore multiple apps from backup[/bold]")
+
+    sources = ["local disk"] + [f"remote '{r.name}'" for r in cfg.backup.remotes]
+    source_idx = pick("Restore from", sources)
+
+    if source_idx == 0:
+        root = Path(cfg.backup_local_path)
+        found = sorted(root.glob("*/*/*.tar.gz"))
+        if not found:
+            console.print(f"[yellow]No local backups under {root}.[/yellow]")
+            return None
+        rel_files = [str(p.relative_to(root)) for p in found]
+        from_remote, host = None, None
+    else:
+        remote = cfg.backup.remotes[source_idx - 1]
+        rclone = RcloneClient()
+        hosts = rclone.list_dirs(remote.rclone_remote)
+        if not hosts:
+            console.print(f"[yellow]No backups found on remote '{remote.name}'.[/yellow]")
+            return None
+        host = hosts[_pick_host(hosts, cfg.host_label)]
+        rel_files = [f for f in rclone.list_files(f"{remote.rclone_remote}/{host}") if f.endswith(".tar.gz")]
+        from_remote = remote.name
+
+    latest = latest_per_app(rel_files)
+    if not latest:
+        console.print("[yellow]No backups found in the expected store/app layout.[/yellow]")
+        return None
+
+    labels = [f"{app_id}:{store}  (latest: {filename})" for store, app_id, filename in latest]
+    indices = multi_select("Select apps to restore", labels)
+    if not indices:
+        console.print("[yellow]Nothing selected.[/yellow]")
+        return None
+
+    app_ids = [latest[i][1] for i in indices]
+    return MultiRestoreSelection(app_ids=app_ids, from_remote=from_remote, host=host)
