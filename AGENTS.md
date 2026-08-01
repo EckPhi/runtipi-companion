@@ -101,6 +101,37 @@ transient failure on one app (or one upstream dependency) doesn't blank
 out backups for everything else. If you touch this loop, keep that
 per-app isolation.
 
+## A failed `runtipi-cli app stop` doesn't mean the app is still running
+
+Don't trust `app_stop`'s exit code as a proxy for container state. Hit
+this for real, twice, with the RabbitMQ issue above: `runtipi-cli app
+stop` can exit non-zero for a reason completely unrelated to whether the
+containers actually stopped (its event-publish call to RabbitMQ fails
+*after* docker has already stopped the containers). The first version of
+the per-app isolation fix (previous section) treated any `app_stop`
+failure as "app still running, skip the backup" — which is safe for the
+backup, but means the restart call at the bottom of `_backup_one_app`
+was never reached, so apps that HAD actually stopped were left down
+indefinitely after the run.
+
+Fix: on a failed `app_stop`, call `is_app_running` again — it shells
+straight to `docker ps -f name=...`, completely bypassing runtipi-cli, so
+it reflects real container state regardless of what runtipi-cli's exit
+code says. If the app is actually down, proceed with the archive as if
+stop had succeeded (`stopped_by_us = True`). The archive/verify/prune
+block now runs inside `try/finally` where the `finally` always calls
+`app_start` if `stopped_by_us` — so restart happens no matter what fails
+afterward (verify error, or *any* other exception, not just
+`CommandError`; a crash inside `_archive_app` had the identical "app left
+stopped" gap before this fix and is now covered too). A genuine failure
+(container confirmed still running) keeps the safe behavior: no archive,
+no restart attempted (there's nothing to restart).
+
+If you touch `_backup_one_app` again: the restart guarantee lives in that
+`finally`, not in a plain statement after the archive step. Don't
+"simplify" it back to a flat sequence — that's exactly the shape that
+caused apps to be left down twice already.
+
 ## `tailscale up` vs `tailscale set`
 
 `tailscale up --ssh` **refuses to run** if the daemon already has other
@@ -203,9 +234,11 @@ commas in query params / recipient lists), not just a UX preference.
 ## Known non-issues (don't "fix" these)
 
 - RabbitMQ `transient_nonexcl_queues` deprecation breaking
-  `runtipi-cli app stop` is an **upstream runtipi/RabbitMQ** problem, not
-  ours. Our fix was making the backup loop resilient to it (see above),
-  not working around RabbitMQ itself.
+  `runtipi-cli app stop`'s exit code is an **upstream runtipi/RabbitMQ**
+  problem, not ours — don't try to fix RabbitMQ or runtipi-cli from this
+  codebase. What *is* ours to fix (and now is): not trusting that exit
+  code as ground truth for container state, and guaranteeing restart
+  regardless (see the section above).
 - `tailscale install` (the old top-level command) was intentionally
   removed in favor of `setup tailscale` — this was a deliberate breaking
   change (`f19a343`), not an oversight if you see old docs/scripts
