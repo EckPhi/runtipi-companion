@@ -46,3 +46,11 @@ def test_missing_remotes_ignores_disabled():
     cfg = _cfg_with_remotes("b2:bucket/path")
     cfg.backup.remotes[0].enabled = False
     assert missing_remotes(cfg, configured=[]) == []
+
+
+def test_missing_remotes_ignores_api_backed_remote():
+    cfg = _cfg_with_remotes("encrypted:backups")
+    cfg.backup.remotes[0].api_url = "http://rclone:5533"
+    cfg.backup.remotes[0].api_username = "companion"
+    cfg.backup.remotes[0].api_password_env = "RCLONE_API_PASSWORD"
+    assert missing_remotes(cfg, configured=[]) == []

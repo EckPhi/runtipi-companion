@@ -13,7 +13,7 @@ DEFAULT_CONFIG_PATHS = [
 # Schema version written into config files as `version:`. Files without the
 # key are treated as version 1 (pre-versioning). Bump this together with a
 # new migration step in migrations.py whenever the config shape changes.
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 VALID_SCHEDULES = ("daily", "weekly", "monthly", "yearly")
 
@@ -35,6 +35,13 @@ class RemoteConfig:
     schedules: dict = field(default_factory=dict)  # str -> ScheduleConfig
     bandwidth_limit: Optional[str] = None  # rclone --bwlimit value, e.g. "5M"
     extra_rclone_flags: list = field(default_factory=list)
+    # Optional rclone Remote Control transport. When set, backups are
+    # streamed to/from the existing rclone service instead of invoking a
+    # local rclone binary. The password stays out of YAML and is read from
+    # the named environment variable at call time.
+    api_url: Optional[str] = None
+    api_username: Optional[str] = None
+    api_password_env: Optional[str] = None
 
     def retention_for(self, schedule: str) -> Optional[int]:
         sched = self.schedules.get(schedule)

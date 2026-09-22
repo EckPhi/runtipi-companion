@@ -14,7 +14,7 @@ from typing import Optional
 
 from rich.console import Console
 
-from ..backup.rclone import RcloneClient
+from ..backup.rclone import client_for_remote
 from ..backup.restore import latest_per_app
 from ..config import CompanionConfig
 from . import config_wizard as cw
@@ -137,7 +137,7 @@ def interactive_restore(cfg: CompanionConfig) -> Optional[RestoreSelection]:
         return RestoreSelection(store=store, app_id=app_id, backup_file=filename)
 
     remote = cfg.backup.remotes[source_idx - 1]
-    rclone = RcloneClient()
+    rclone = client_for_remote(remote)
     hosts = rclone.list_dirs(remote.rclone_remote)
     if not hosts:
         console.print(f"[yellow]No backups found on remote '{remote.name}'.[/yellow]")
@@ -177,7 +177,7 @@ def interactive_restore_multi(cfg: CompanionConfig) -> Optional[MultiRestoreSele
         from_remote, host = None, None
     else:
         remote = cfg.backup.remotes[source_idx - 1]
-        rclone = RcloneClient()
+        rclone = client_for_remote(remote)
         hosts = rclone.list_dirs(remote.rclone_remote)
         if not hosts:
             console.print(f"[yellow]No backups found on remote '{remote.name}'.[/yellow]")

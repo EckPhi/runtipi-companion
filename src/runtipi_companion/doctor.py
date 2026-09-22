@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__
-from .backup.rclone import RcloneClient
+from .backup.rclone import RcloneAPIError, RcloneClient, client_for_remote
 from .config import CompanionConfig
 from .system import version_check
 from .system.runtipi_cli import RuntipiCLI, RuntipiCLIError
@@ -165,12 +165,20 @@ def _check_remotes(cfg: CompanionConfig) -> list:
     enabled = [r for r in cfg.backup.remotes if r.enabled]
     if not enabled:
         return []
+    cli_remotes = [remote for remote in enabled if not remote.api_url]
     rclone = RcloneClient(dry_run=True)
-    if not rclone.is_installed():
-        return [CheckResult("rclone", FAIL, "remotes configured but rclone is not installed")]
-    results = [CheckResult("rclone", OK, "installed")]
-    configured = set(rclone.list_remotes())
+    if cli_remotes and not rclone.is_installed():
+        return [CheckResult("rclone", FAIL, "CLI remotes configured but rclone is not installed")]
+    results = [CheckResult("rclone", OK, "installed")] if cli_remotes else []
+    configured = set(rclone.list_remotes()) if cli_remotes else set()
     for remote in enabled:
+        if remote.api_url:
+            try:
+                client_for_remote(remote).list_dirs(remote.rclone_remote)
+                results.append(CheckResult(f"rclone API remote '{remote.name}'", OK, "reachable"))
+            except RcloneAPIError as e:
+                results.append(CheckResult(f"rclone API remote '{remote.name}'", FAIL, str(e)))
+            continue
         remote_name = remote.rclone_remote.split(":")[0]
         results.append(
             CheckResult(

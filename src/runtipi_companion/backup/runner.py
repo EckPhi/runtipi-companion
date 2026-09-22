@@ -14,7 +14,7 @@ from ..config import CompanionConfig
 from ..system.runtipi_cli import RuntipiCLI
 from ..system.shell import CommandError
 from .app_settings import resolve_app_settings, run_app_command
-from .rclone import RcloneClient
+from .rclone import client_for_remote
 from .retention import select_prunable
 
 console = Console()
@@ -333,7 +333,6 @@ def sync_to_remotes(
     remotes: Optional[list] = None,
     dry_run: bool = False,
 ) -> None:
-    rclone = RcloneClient(dry_run=dry_run)
     # Remotes may be shared between machines, so each host syncs its local
     # backups into its own <remote>/<host_label>/ subtree and prunes only
     # there -- other hosts' backups are never touched by this machine's
@@ -348,6 +347,8 @@ def sync_to_remotes(
         remote_retention = remote.retention_for(schedule)
         if remote_retention is None:
             continue  # this remote isn't configured to keep this schedule
+
+        rclone = client_for_remote(remote, dry_run=dry_run)
 
         remote_host_root = f"{remote.rclone_remote}/{cfg.host_label}"
         console.print(f"[bold]Syncing schedule '{schedule}' to remote '{remote.name}'[/bold]")
@@ -369,7 +370,7 @@ def sync_to_remotes(
             )
 
 
-def prune_remote(rclone: RcloneClient, remote_root: str, schedule: str, retention: int) -> None:
+def prune_remote(rclone, remote_root: str, schedule: str, retention: int) -> None:
     """Prune per app+schedule under `remote_root` (an rclone path already
     scoped to one host's subtree)."""
     files_by_dir = {}

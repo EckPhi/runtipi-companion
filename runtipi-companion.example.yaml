@@ -3,7 +3,7 @@
 
 # Config schema version -- don't edit. 'runtipi-companion config migrate'
 # upgrades old files when a new companion version changes the schema.
-version: 3
+version: 4
 
 runtipi:
   path: /opt/runtipi
@@ -45,6 +45,12 @@ backup:
       rclone_remote: "b2-runtipi:my-bucket/runtipi-backups"
       enabled: true
       bandwidth_limit: null   # e.g. "5M" to cap upload speed
+      # Optional: use an existing rclone Remote Control API instead of a
+      # local rclone binary. Set all three fields together. The password is
+      # read from the environment, never stored in this file.
+      api_url: null            # e.g. http://rclone:5533
+      api_username: null
+      api_password_env: null   # e.g. RCLONE_API_PASSWORD
       schedules:
         daily:
           retention: 14

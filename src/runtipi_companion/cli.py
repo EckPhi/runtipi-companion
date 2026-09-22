@@ -15,6 +15,7 @@ from . import doctor as doctor_mod
 from . import security as security_mod
 from . import update as update_mod
 from .backup import restore as restore_mod
+from .backup.rclone import RcloneAPIError
 from .config import CONFIG_VERSION, DEFAULT_CONFIG_PATHS, CompanionConfig, ConfigError, load_config, migrate_file
 from .config.templates import EXAMPLE_CONFIG
 from .security import tailscale as tailscale_mod
@@ -590,6 +591,7 @@ def main() -> None:
         restore_mod.RestoreRunError,
         FileNotFoundError,
         PermissionError,
+        RcloneAPIError,
     ) as e:
         console.print(f"[red]{e}[/red]")
         raise SystemExit(1) from e

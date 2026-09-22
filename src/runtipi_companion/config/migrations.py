@@ -50,10 +50,17 @@ def _migrate_2_to_3(raw: dict) -> dict:
     return raw
 
 
+def _migrate_3_to_4(raw: dict) -> dict:
+    """v4 adds optional rclone Remote Control connection fields to each
+    remote. Existing CLI-backed remotes need no explicit values."""
+    return raw
+
+
 # version N -> the step that produces N+1
 MIGRATIONS = {
     1: _migrate_1_to_2,
     2: _migrate_2_to_3,
+    3: _migrate_3_to_4,
 }
 
 

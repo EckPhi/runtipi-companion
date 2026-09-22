@@ -63,6 +63,9 @@ def _remotes_from_list(raw: Optional[list]) -> list:
                 schedules=_schedules_from_dict(item.get("schedules", {})),
                 bandwidth_limit=item.get("bandwidth_limit"),
                 extra_rclone_flags=item.get("extra_rclone_flags", []),
+                api_url=(item.get("api_url") or None),
+                api_username=(item.get("api_username") or None),
+                api_password_env=(item.get("api_password_env") or None),
             )
         )
     return remotes
@@ -193,3 +196,6 @@ def validate_config(cfg: CompanionConfig) -> None:
                 f"Remote '{remote.name}' has no schedules/retention configured. "
                 f"Add at least one of {VALID_SCHEDULES} under its 'schedules' key."
             )
+        api_fields = (remote.api_url, remote.api_username, remote.api_password_env)
+        if any(api_fields) and not all(api_fields):
+            raise ConfigError(f"Remote '{remote.name}' must set api_url, api_username, and api_password_env together.")

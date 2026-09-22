@@ -105,6 +105,10 @@ def _prompt_remote_details(taken_names: set, current: Optional[dict] = None) -> 
         "rclone_remote": rclone_remote,
         "enabled": cur.get("enabled", True),
         "bandwidth_limit": bandwidth,
+        "extra_rclone_flags": cur.get("extra_rclone_flags", []),
+        "api_url": cur.get("api_url"),
+        "api_username": cur.get("api_username"),
+        "api_password_env": cur.get("api_password_env"),
         "schedules": schedules,
     }
 

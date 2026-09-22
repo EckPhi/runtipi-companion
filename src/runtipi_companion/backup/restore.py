@@ -11,9 +11,9 @@ from rich.console import Console
 
 from ..config import CompanionConfig
 from ..system.runtipi_cli import RuntipiCLI
-from ..system.shell import CommandError, confirm, run
+from ..system.shell import CommandError, confirm
 from .app_settings import resolve_app_settings, run_app_command
-from .rclone import RcloneClient
+from .rclone import client_for_remote
 from .retention import select_latest
 
 console = Console()
@@ -38,7 +38,7 @@ def _remote_files(cfg: CompanionConfig, remote_name: str, host: str) -> list:
     remote = cfg.backup.remote(remote_name)
     if not remote:
         raise ValueError(f"Unknown remote '{remote_name}'. Configured remotes: {[r.name for r in cfg.backup.remotes]}")
-    rclone = RcloneClient()
+    rclone = client_for_remote(remote)
     return [f"{host}/{f}" for f in rclone.list_files(f"{remote.rclone_remote}/{host}")]
 
 
@@ -53,7 +53,7 @@ def list_remote_hosts(cfg: CompanionConfig, remote_name: str) -> list:
     remote = cfg.backup.remote(remote_name)
     if not remote:
         raise ValueError(f"Unknown remote '{remote_name}'")
-    return RcloneClient().list_dirs(remote.rclone_remote)
+    return client_for_remote(remote).list_dirs(remote.rclone_remote)
 
 
 def latest_per_app(files: list) -> list:
@@ -177,10 +177,7 @@ def restore_backup(
         local_target = Path(cfg.backup.work_dir) / "restore" / Path(remote_rel).name
         local_target.parent.mkdir(parents=True, exist_ok=True)
         console.print(f"Downloading {remote_rel} from remote '{from_remote}'")
-        run(
-            ["rclone", "copyto", f"{remote.rclone_remote}/{remote_rel}", str(local_target)],
-            dry_run=dry_run,
-        )
+        client_for_remote(remote, dry_run=dry_run).copy_to_local(f"{remote.rclone_remote}/{remote_rel}", local_target)
         archive_path = local_target
     else:
         archive_path = Path(cfg.backup_local_path) / store / app_id / backup_file

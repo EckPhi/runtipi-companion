@@ -165,6 +165,10 @@ class RemoteForm(Vertical):
             "rclone_remote": target,
             "enabled": self.query_one(".r-enabled", Checkbox).value,
             "bandwidth_limit": bwlimit,
+            "extra_rclone_flags": self._initial.get("extra_rclone_flags", []),
+            "api_url": self._initial.get("api_url"),
+            "api_username": self._initial.get("api_username"),
+            "api_password_env": self._initial.get("api_password_env"),
             "schedules": schedules,
         }
 
@@ -494,6 +498,7 @@ class ConfigFormApp(App):
                 "sleep_duration": self._get("backup", "sleep_duration", default=10),
                 "schedules": local_schedules,
                 "remotes": remotes,
+                "app_settings": self._get("backup", "app_settings", default={}),
             },
             "security": security,
             "tailscale": {

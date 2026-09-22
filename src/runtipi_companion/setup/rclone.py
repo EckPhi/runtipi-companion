@@ -23,7 +23,7 @@ def missing_remotes(cfg: CompanionConfig, configured: list) -> list:
     """rclone remote names the config references but rclone doesn't know."""
     missing = []
     for remote in cfg.backup.remotes:
-        if not remote.enabled:
+        if not remote.enabled or remote.api_url:
             continue
         name = remote.rclone_remote.split(":")[0]
         if name not in configured and name not in missing:
@@ -32,6 +32,11 @@ def missing_remotes(cfg: CompanionConfig, configured: list) -> list:
 
 
 def setup_rclone(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool = False) -> None:
+    cli_remotes = [remote for remote in cfg.backup.remotes if remote.enabled and not remote.api_url]
+    if not cli_remotes:
+        console.print("[green]No local-CLI rclone remotes require setup.[/green]")
+        return
+
     client = RcloneClient(dry_run=dry_run)
 
     if client.is_installed():

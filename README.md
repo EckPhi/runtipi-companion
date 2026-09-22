@@ -98,6 +98,32 @@ Managing several boxes (or provisioning unattended)? There's a thin Ansible
 playbook in [`deploy/ansible/`](./deploy/ansible/) that installs the package,
 uploads a config, and runs the setup/hardening steps non-interactively.
 
+### Runtipi app / container
+
+The Mistborn app store also packages Companion as a headless backup worker.
+That container schedules verified backups and transfers them through the
+authenticated Remote Control API of the store's Rclone Mount app, so the
+backup remote does not need a FUSE mount. Host setup, updates, Tailscale and
+security hardening remain standalone-CLI commands by design.
+
+An API-backed remote uses the same retention model as a CLI-backed remote:
+
+```yaml
+backup:
+  remotes:
+    - name: cloud
+      rclone_remote: encrypted:runtipi-backups
+      api_url: http://rclone:5533
+      api_username: rclone-admin
+      api_password_env: RCLONE_API_PASSWORD
+      schedules:
+        daily: {retention: 14}
+```
+
+The named password environment variable must be present at runtime. Never
+expose rclone's RC endpoint publicly: it provides administrative access to
+rclone and every configured remote.
+
 ## Quickstart
 
 On a first run (no config file anywhere), any command offers to launch the

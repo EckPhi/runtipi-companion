@@ -85,6 +85,50 @@ def test_remote_with_retention(tmp_path):
     assert remote.retention_for("weekly") is None
 
 
+def test_remote_control_connection_parsed(tmp_path):
+    p = write_config(
+        tmp_path,
+        """
+        version: 4
+        runtipi:
+          path: /opt/runtipi
+        backup:
+          remotes:
+            - name: cloud
+              rclone_remote: "encrypted:backups"
+              api_url: "http://rclone:5533"
+              api_username: companion
+              api_password_env: RCLONE_API_PASSWORD
+              schedules:
+                daily: {retention: 14}
+    """,
+    )
+    remote = load_config(str(p)).backup.remote("cloud")
+    assert remote.api_url == "http://rclone:5533"
+    assert remote.api_username == "companion"
+    assert remote.api_password_env == "RCLONE_API_PASSWORD"
+
+
+def test_remote_control_connection_requires_all_fields(tmp_path):
+    p = write_config(
+        tmp_path,
+        """
+        version: 4
+        runtipi:
+          path: /opt/runtipi
+        backup:
+          remotes:
+            - name: cloud
+              rclone_remote: "encrypted:backups"
+              api_url: "http://rclone:5533"
+              schedules:
+                daily: {retention: 14}
+    """,
+    )
+    with pytest.raises(ConfigError, match="must set api_url"):
+        load_config(str(p))
+
+
 def test_duplicate_remote_names_rejected(tmp_path):
     p = write_config(
         tmp_path,

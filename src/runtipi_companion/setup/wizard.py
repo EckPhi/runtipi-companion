@@ -115,7 +115,8 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
                 path.mkdir(parents=True, exist_ok=True)
     console.print(f"Backup directories ready: {cfg.backup_local_path}, {cfg.backup.work_dir}")
 
-    if cfg.backup.remotes:
+    cli_remotes = [remote for remote in cfg.backup.remotes if remote.enabled and not remote.api_url]
+    if cli_remotes:
         rclone = RcloneClient(dry_run=dry_run)
         if not rclone.is_installed():
             console.print(
@@ -125,7 +126,7 @@ def run_wizard(cfg: CompanionConfig, *, dry_run: bool = True, assume_yes: bool =
             )
         else:
             configured = set(rclone.list_remotes())
-            for remote in cfg.backup.remotes:
+            for remote in cli_remotes:
                 remote_name = remote.rclone_remote.split(":")[0]
                 if remote_name not in configured:
                     console.print(

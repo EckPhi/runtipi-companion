@@ -10,7 +10,7 @@ def test_migrate_v1_to_current():
     raw = {"runtipi": {"path": "/opt/runtipi"}}
     migrated, applied = migrate(raw)
     assert migrated["version"] == CONFIG_VERSION
-    assert applied == ["v1 -> v2", "v2 -> v3"]
+    assert applied == ["v1 -> v2", "v2 -> v3", "v3 -> v4"]
     assert migrated["notify"]["urls"] == []
     assert migrated["updates"]["backup_before"] is True
     assert migrated["backup"]["host_label"] is None
@@ -22,7 +22,7 @@ def test_migrate_v1_to_current():
 def test_migrate_v2_to_current():
     raw = {"version": 2, "runtipi": {"path": "/opt/runtipi"}}
     migrated, applied = migrate(raw)
-    assert applied == ["v2 -> v3"]
+    assert applied == ["v2 -> v3", "v3 -> v4"]
     assert migrated["backup"]["app_settings"] == {}
 
 
