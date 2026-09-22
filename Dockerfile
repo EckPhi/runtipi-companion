@@ -6,6 +6,8 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY . /app
+ARG APP_VERSION=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION}
 RUN pip install --no-cache-dir .
 
 ENV RUNTIPI_COMPANION_CONFIG=/config/config.yaml \
