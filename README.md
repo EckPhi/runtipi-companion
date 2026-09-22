@@ -100,8 +100,11 @@ uploads a config, and runs the setup/hardening steps non-interactively.
 
 ### Runtipi app / container
 
-The Mistborn app store also packages Companion as a headless backup worker.
-That container schedules verified backups and transfers them through the
+The Mistborn app store packages Companion as a backup service with an
+authenticated web dashboard. The dashboard shows scheduler and remote status,
+lists recent local archives, and can start daily, weekly, monthly, or yearly
+backups on demand. Restore stays CLI-only because it replaces live app data.
+The container schedules verified backups and transfers them through the
 authenticated Remote Control API of the store's Rclone Mount app, so the
 backup remote does not need a FUSE mount. Host setup, updates, Tailscale and
 security hardening remain standalone-CLI commands by design.
