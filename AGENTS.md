@@ -1,310 +1,92 @@
 # Agent notes for runtipi-companion
 
-Gotchas discovered from real-box testing (a live Runtipi VPS, not just
-unit tests / e2e). Read this before touching `system/shell.py`,
-`security/hardening.py`, or `setup/wizard.py` — that's where all of this
-bit us. Each item is a rule + the incident that taught it, so you can judge
-edge cases instead of cargo-culting the rule.
+This repository is exclusively the containerized Runtipi Companion app. Host
+provisioning, shell setup, Tailscale, rclone configuration, security hardening,
+diagnostics, and Runtipi update orchestration belong in
+`EckPhi/mistborn-bootstrap`, not here.
 
 ## Package layout
 
-Subpackages by concern, not by "everything flat":
+- `backup/` — backup runner, retention, restore, rclone RC client, and per-app
+  settings.
+- `config/` — the app's YAML schema and loader.
+- `system/` — shell execution, Docker inspection, notifications, and the
+  Runtipi CLI wrapper used by backup operations.
+- `container.py` — managed config rendering, scheduler, and authenticated web
+  dashboard.
 
-- `backup/` — runner, retention, restore, rclone client, app_settings
-  (per-app backup overrides: docker labels + config merge)
-- `config/` — schema (dataclasses), loader (YAML→dataclass), migrations,
-  templates (bundled example config)
-- `security/` — hardening (SSH/UFW/fail2ban/lockdown), tailscale
-- `setup/` — first-run wizard, services (systemd), rclone setup
-- `system/` — shell (the `run()` wrapper everything goes through), docker
-  (container id/labels/exec, no sudo), notify, runtipi_cli wrapper,
-  version_check
-- `ui/` — TUI bits: classic prompt wizard, form wizard (textual),
-  validators, restore picker
+## Shell execution is load-bearing
 
-`cli.py`, `doctor.py`, `update.py` stay top-level (thin, cross-cutting).
+All subprocesses go through `system/shell.py::run()`. Parsing callers use
+`quiet=True`; interactive commands use `interactive=True`. Do not introduce
+raw `subprocess` calls or bypass its error handling.
 
-## `system/shell.py` is load-bearing — read it before adding any subprocess call
+The container reaches the host through the Docker socket and mounted Runtipi
+directory. Docker reads intentionally do not use sudo.
 
-Every command in this codebase should go through `shell.run()`, not raw
-`subprocess`. It has three output modes and getting the wrong one causes
-silent hangs that look like bugs elsewhere:
+## Backup safety invariants
 
-1. **Default (stream-and-collapse)**: on a real terminal, shows a live
-   8-line tail of output while the command runs, erases it on exit 0,
-   keeps the full output for the error report on failure. This is what
-   most non-quiet commands should use — no special flag needed, it's the
-   default when `quiet=False, interactive=False, input=None` and
-   `console.is_terminal`.
-2. **`quiet=True`**: silent capture, for callers that parse `result.stdout`
-   (rclone listings, `sshd -T`, `is_app_running`). Never stream these —
-   streaming is presentational and would still work, but there's no reason
-   to paint a tail nobody reads.
-3. **`interactive=True`**: full terminal handoff (stdin/stdout/stderr
-   inherited, nothing captured). **Required**, not optional, for:
-   - anything that prompts (`tailscale up` printing a login URL, `rclone
-     config`'s OAuth flow)
-   - anything whose success output the user must see (`tailscale status`,
-     `security status` — these commands' output *is* the result; if you
-     run them captured, the command succeeds and the user sees nothing)
-   - long installers where progress reassures the user it isn't frozen
-     (the official runtipi installer, `apt-get install` isn't as
-     important since it's quick, but the runtipi installer takes minutes)
+- A failure backing up one app must not prevent the remaining apps from being
+  attempted. Collect failures, sync successful archives, then report the
+  aggregate failure.
+- A failed `runtipi-cli app stop` does not prove that containers remain
+  running. Recheck with Docker before deciding whether it is safe to archive.
+- If Companion stopped an app, its restart belongs in a `finally` block so it
+  happens after every archive or verification outcome.
+- Run `pre_backup_command` while the app is still running, before the stop
+  decision.
+- Run `post_backup_command` unconditionally in the same cleanup path, after
+  restarting an app that Companion stopped.
+- Run `restore_command` after the file restore and after ensuring the app is
+  running. A configured hook that cannot execute must fail loudly.
 
-**The sudo trap**: the very first `sudo` command in a session prompts for
-a password on the tty. In both stream mode (tail repaints over the prompt)
-and quiet/captured mode (prompt is captured and never shown), this makes
-sudo *silently wait forever* — looks exactly like a hang. Fixed by
-`_ensure_sudo_credentials()` in shell.py: before running any `sudo`-prefixed
-command in a non-interactive mode, it runs `sudo -v` with full terminal
-inheritance first (skipped if already root, skipped off-terminal). If you
-add a new sudo call path that bypasses `shell.run()`, you will reintroduce
-this bug.
+## Per-app settings
 
-**Never do Python file I/O on paths under `/etc` or other root-owned
-locations.** `Path.write_text()` / `shutil.copy2()` run as the invoking
-user (a normal user with pipx-installed CLI, not root), and die with
-`PermissionError` — while the *shell commands* elsewhere in the same
-function were correctly sudo'd, giving a confusing "some of this function
-needed root and some didn't" bug. This bit `security/hardening.py` twice
-in one session (sshd_config backup/write, then fail2ban's jail.local) — it
-is an easy thing to miss because it works fine on a machine where you're
-testing as root. Rule: any read/write of a root-owned file goes through
-`_sudo_read` / `_sudo_write` / `_sudo_copy` helpers (`cat`/`tee`/`cp -a`
-under sudo), never direct `Path` methods. Audit any new file-touching code
-in `security/` or `setup/` for this before merging.
+Every `AppBackupConfig` override remains optional with a `None` default.
+Configuration wins per field, Docker labels fill unset fields, and hard-coded
+defaults apply last. A concrete falsy dataclass default breaks this merge.
 
-## `main()`'s clean-error list needs to stay in sync
+Verify third-party backup examples against the product's current official
+documentation before adding them.
 
-`cli.py:main()` wraps `app()` and turns a specific set of exceptions into
-a one-line red message + exit 1, instead of typer's full traceback wall
-(`pretty_exceptions_enable=False` is set so *un*caught exceptions still
-traceback plainly — that's intentional, it means "this is a bug, not an
-expected failure mode"). The list is currently: `CommandError`,
-`BackupRunError`, `BackupVerificationError`, `FileNotFoundError`,
-`PermissionError`. When you introduce a new exception type for an
-*expected* operational failure (not a bug), add it here, or a real user
-will see a Python traceback for something that should have been a clean
-error message. This happened live: `PermissionError` wasn't on the list
-yet when the `/etc` file-I/O bug above got hit for real.
+## Configuration compatibility
 
-## Backup runs must survive one app's failure
+The managed app config is version 4. The legacy `security`, `tailscale`, and
+`updates` keys are parsed only so files created by the former standalone CLI
+continue to load; the app never acts on them. Do not add host-management
+behavior back to these fields.
 
-`backup/runner.py::run_backup` iterates apps and must not let one app's
-`runtipi-cli app stop` failure cancel every other app's backup. This isn't
-hypothetical — it happened for real: RabbitMQ's `transient_nonexcl_queues`
-deprecation (RabbitMQ 4.3+) broke `runtipi-cli app stop` for *every* app on
-a real box, and the first implementation aborted the whole run on app #1.
-Now each app is wrapped in `_backup_one_app` + try/except, failures
-collected, remaining apps still processed, whatever succeeded still syncs
-to remotes, and `BackupRunError` is raised at the end with a summary — so
-cron/systemd exit codes and failure notifications still fire, but a
-transient failure on one app (or one upstream dependency) doesn't blank
-out backups for everything else. If you touch this loop, keep that
-per-app isolation.
+Any app config shape change must update the schema, managed config rendering,
+and tests together. A config newer than the supported version must fail rather
+than be guessed at.
 
-## A failed `runtipi-cli app stop` doesn't mean the app is still running
+## Rclone paths and transport
 
-Don't trust `app_stop`'s exit code as a proxy for container state. Hit
-this for real, twice, with the RabbitMQ issue above: `runtipi-cli app
-stop` can exit non-zero for a reason completely unrelated to whether the
-containers actually stopped (its event-publish call to RabbitMQ fails
-*after* docker has already stopped the containers). The first version of
-the per-app isolation fix (previous section) treated any `app_stop`
-failure as "app still running, skip the backup" — which is safe for the
-backup, but means the restart call at the bottom of `_backup_one_app`
-was never reached, so apps that HAD actually stopped were left down
-indefinitely after the run.
+- Strip trailing slashes from remote targets before appending paths.
+- Local backups remain flat under `<local>/<store>/<app>`; only remote backups
+  gain the `<host_label>` prefix.
+- Remote syncs include only archives for the active schedule.
+- Container operation uses the authenticated rclone Remote Control API. Do not
+  require a second mount or a local rclone configuration.
 
-Fix: on a failed `app_stop`, call `is_app_running` again — it shells
-straight to `docker ps -f name=...`, completely bypassing runtipi-cli, so
-it reflects real container state regardless of what runtipi-cli's exit
-code says. If the app is actually down, proceed with the archive as if
-stop had succeeded (`stopped_by_us = True`). The archive/verify/prune
-block now runs inside `try/finally` where the `finally` always calls
-`app_start` if `stopped_by_us` — so restart happens no matter what fails
-afterward (verify error, or *any* other exception, not just
-`CommandError`; a crash inside `_archive_app` had the identical "app left
-stopped" gap before this fix and is now covered too). A genuine failure
-(container confirmed still running) keeps the safe behavior: no archive,
-no restart attempted (there's nothing to restart).
+## Web app invariants
 
-If you touch `_backup_one_app` again: the restart guarantee lives in that
-`finally`, not in a plain statement after the archive step. Don't
-"simplify" it back to a flat sequence — that's exactly the shape that
-caused apps to be left down twice already.
+- The dashboard requires configured Basic Auth credentials.
+- State-changing routes require CSRF validation.
+- Only one backup may run at a time.
+- Never expose a restore action casually: restore replaces live app data and
+  needs a deliberate confirmation design.
 
-## Per-app backup settings: ordering and merge rules that matter
+## Verification
 
-`backup/app_settings.py` resolves docker labels + config.yaml's
-`backup.app_settings.<app_id>` into one `ResolvedAppSettings`. Two things
-that are easy to get wrong if you touch this again:
+Before committing, run:
 
-- **Merge direction.** Every field in `AppBackupConfig` (the schema
-  dataclass) defaults to `None`, not a concrete falsy value, specifically
-  so `merge_overrides()` can tell "not set at this layer" apart from
-  "explicitly set to False/[]". Config file wins per-field; label fills in
-  what config doesn't set; hardcoded defaults (`False`, `[]`, `None`) only
-  apply if *neither* layer set that field. If you add a new field, give it
-  an `Optional[...] = None` default in the schema, not a concrete one, or
-  the merge silently breaks (a label override would look identical to "not
-  set" and never take effect).
-- **`pre_backup_command` runs BEFORE the stop/keep_running decision**, not
-  after. It needs a running container to `docker exec` into, so it always
-  runs first while the app is still up — then `effective_stop = stop and
-  not settings.keep_running` decides whether to stop it afterward. Don't
-  move the pre-backup hook after the stop step; it would then only ever
-  see a stopped container for the common (non-`keep_running`) case.
-- **`post_backup_command` lives in the SAME `finally` as the app restart,
-  and runs unconditionally** — after the restart-if-we-stopped-it step, so
-  the container is up again by the time it fires, and regardless of
-  whether the archive/verify succeeded or failed. This exists because of a
-  real requirement, not symmetry for its own sake: QuestDB's own backup
-  docs (https://questdb.com/docs/operations/backup/) say `CHECKPOINT
-  RELEASE` must run "regardless of whether the copy operation succeeded or
-  failed" after `CHECKPOINT CREATE` (`pre_backup_command`). Don't try to
-  fold this into `pre_backup_command` with a shell `&&`/`||` — that can't
-  express "always, even if the archive step in between crashed", only this
-  `finally` placement can. Re-checks real container state
-  (`is_app_running`) right before running, same as everywhere else here —
-  doesn't trust stale state from earlier in the function.
-- **`restore_command` runs AFTER the normal file restore and after the app
-  is restarted** (chosen deliberately as a *supplement*, not a replacement,
-  of the built-in restore — see the PR that added this if you're
-  reconsidering that). If the app wasn't running before the restore at all
-  (so the `stopped_by_us`-gated restart never fires), `restore_backup`
-  explicitly starts it before running `restore_command` — don't assume the
-  app is already up by the time you get there. QuestDB itself doesn't need
-  this hook (restoring is just putting `db`/`snapshot` back) — it's there
-  for apps that need an actual import step, e.g. loading a SQL dump.
-- A configured `pre_backup_command`/`post_backup_command`/`restore_command`
-  that can't run (app not running, container not resolvable) raises
-  `CommandError` rather than silently skipping — a configured hook that
-  never executes should be loud, not a quiet no-op that leaves e.g. a
-  database checkpoint never released.
-- Verify third-party product behavior against their own current docs
-  before writing an example config, not from memory/training data —
-  the first pass at the QuestDB example here used invented syntax
-  (`SNAPSHOT PREPARE`/`SNAPSHOT COMPLETE`, port 9003) that turned out to be
-  wrong on both the command names (real: `CHECKPOINT CREATE`/`CHECKPOINT
-  RELEASE`) and the port (real: 9000, QuestDB's default HTTP/REST port).
-  It also missed that RELEASE's "always run" requirement needed a feature
-  (`post_backup_command`) that didn't exist yet — caught only when the user
-  asked "does this actually work?" and pushed to check the real docs.
-- `system/docker.py`'s `container_id`/`read_labels` never use `sudo`,
-  matching `RuntipiCLI.is_app_running`'s existing (also sudo-less) `docker
-  ps` call — this assumes the invoking user is root or in the `docker`
-  group, same assumption the rest of the codebase already makes for docker
-  reads (only `runtipi-cli` itself is always sudo'd, see below).
+```bash
+uvx ruff@0.8.4 check --fix .
+uvx ruff@0.8.4 format .
+uv run --isolated --frozen --extra dev pytest
+docker build --build-arg APP_VERSION=0.0.0 -t runtipi-companion:test .
+```
 
-## `tailscale up` vs `tailscale set`
-
-`tailscale up --ssh` **refuses to run** if the daemon already has other
-non-default settings (e.g. `--advertise-exit-node` from an earlier `up`)
-and you don't repeat every one of them on the command line — it errors
-out rather than silently dropping settings. Hit this for real in
-`security harden --tailscale-security`. Fix: use `tailscale set --ssh=true`
-to flip one setting in place instead of `tailscale up --ssh`. If you ever
-need to bring tailscale up fresh (not just toggle an existing setting),
-`up` is still correct — this only applies to *changing a setting on an
-already-up daemon*.
-
-## Bootstrapping a fresh Runtipi install: use the official installer, not git clone
-
-`setup/wizard.py` used to `git clone` the runtipi repo when
-`runtipi.path` didn't exist. **This can never work** — the git repo does
-not contain the `runtipi-cli` binary; it's only produced by the official
-installer (`curl -L https://setup.runtipi.io | bash`), which also starts
-the stack. Fixed to shell out to that installer instead (via
-`interactive=True`, sudo'd via `needs_root()` when `/opt` isn't
-user-writable). Also: the installer intentionally does NOT run in
-dry-run mode (unlike the old harmless `mkdir`-only clone) — it downloads
-and starts real services, too much side effect for a preview.
-
-`needs_root(path)` (in wizard.py) checks the nearest *existing* ancestor
-of a target path for write access — use this pattern anywhere you're
-about to create a directory/file that might live under `/opt` or `/etc`
-on some installs and under `$HOME` on others; don't assume either.
-
-## Config schema versioning
-
-`config/schema.py::CONFIG_VERSION` + `config/migrations.py`. Any change to
-the config shape (new field, renamed field, changed default) needs:
-1. Bump `CONFIG_VERSION`.
-2. Add a `_migrate_N_to_N+1` pure dict→dict function to `MIGRATIONS` in
-   migrations.py.
-3. Update `config/templates.py` (the bundled example) AND
-   `runtipi-companion.example.yaml` at repo root — they must stay in sync
-   (a test enforces this: they're compared byte-for-byte).
-
-The loader hard-rejects a config with a version number *higher* than
-`CONFIG_VERSION` — better than silently misreading a future schema.
-Migrations are additive/preserving by design: old values are kept, only
-new defaults are filled in.
-
-## Form wizard (`ui/form_wizard.py`) pre-fill contract
-
-If the form doesn't expose a config field as a widget, it MUST be
-round-tripped from the existing file in `_collect()`, not defaulted. The
-wizard first shipped without this — reopening it on an existing config
-would silently reset `sleep_duration`, the `updates` section, legacy
-`webhook_url`, `auth_key_env`, and the tailscale coordination port back to
-hardcoded defaults. Every `_get(...)` call in `compose()` needs a matching
-carry-through in `_collect()`. When you add a new config field: either
-expose it as a widget (with a validator) or explicitly carry it through
-via `self._get(...)` — don't let it silently fall back to a hardcoded
-default when editing an existing config.
-
-Apprise URLs are a **list of dynamic rows**, not a CSV field — CSV was
-briefly tried and is wrong on the merits (apprise URLs can legally contain
-commas in query params / recipient lists), not just a UX preference.
-
-## rclone remote paths
-
-- `rclone_remote` values get `.rstrip("/")` applied on load (loader) and in
-  the wizards — a trailing slash produces double-slash paths once
-  `<host_label>/<store>/<app>/...` gets appended. Any new code path that
-  accepts a raw rclone target string from the user needs the same
-  stripping.
-- Backups sync to `<remote>/<host_label>/...` — the host subfolder is
-  **remote-only**; local disk stays flat (`<local_path>/<store>/<app>/`).
-  Don't reintroduce a local host subfolder — it was tried and reverted
-  because local disk is inherently single-machine, no isolation needed.
-- Remote sync passes `--include '*-<schedule>-*.tar.gz'` — without this,
-  every sync re-scans/re-considers the *entire* local backup tree
-  including other schedules and pre-update snapshots that specific remote
-  never lists (and therefore never prunes there), which is both wrong per
-  the "a remote only gets what it lists" contract and needlessly slow.
-
-## Testing notes
-
-- `uvx ruff@0.8.4 check --fix .` then `uvx ruff@0.8.4 format .` before every
-  commit — pre-commit hook runs this too, but running it manually first
-  avoids amend-churn.
-- e2e suite (`tests/e2e/e2e.sh`) actually runs against real `rclone` with a
-  local-backend remote; run it locally with:
-  `PATH="$(pwd)/.venv/bin:$PATH" bash tests/e2e/e2e.sh` (needs `uv sync
-  --extra dev` first). It catches real path/flag mistakes that mocked unit
-  tests don't (e.g. the `soft_wrap`/pipefail issue with `backup list`
-  output).
-- Textual form wizard tests use `App.run_test()` (headless pilot) — see
-  `tests/test_form_wizard.py` for the pattern (`_drive()` helper).
-- When a fix is prompted by a real terminal transcript pasted by the user,
-  reproduce it with a monkeypatched `shell.run`/`subprocess.run` stub
-  rather than trusting "it looks right" — several of the bugs above
-  (sudo hang, `/etc` PermissionError, tailscale set vs up) only showed up
-  on the actual box, never in the mocked test suite, until tests were
-  added that specifically simulated the real failure mode.
-
-## Known non-issues (don't "fix" these)
-
-- RabbitMQ `transient_nonexcl_queues` deprecation breaking
-  `runtipi-cli app stop`'s exit code is an **upstream runtipi/RabbitMQ**
-  problem, not ours — don't try to fix RabbitMQ or runtipi-cli from this
-  codebase. What *is* ours to fix (and now is): not trusting that exit
-  code as ground truth for container state, and guaranteeing restart
-  regardless (see the section above).
-- `tailscale install` (the old top-level command) was intentionally
-  removed in favor of `setup tailscale` — this was a deliberate breaking
-  change (`f19a343`), not an oversight if you see old docs/scripts
-  referencing it.
+Reproduce bugs reported from a real Runtipi host with focused stubs or fixtures
+instead of relying only on a visually plausible fix.

@@ -1,8 +1,4 @@
-"""Small container runtime: health endpoint plus calendar backup scheduler.
-
-Host setup/security commands deliberately remain CLI-only. The container
-does one job: run verified backups and send them through rclone's RC API.
-"""
+"""Container runtime, authenticated dashboard, and backup scheduler."""
 
 from __future__ import annotations
 

@@ -1,21 +1,16 @@
 [project]
 name = "runtipi-companion"
 dynamic = ["version"]
-description = "A companion CLI for Runtipi: multi-remote rclone backups with per-remote retention, restores, app/core updates, VPS security hardening, and Tailscale setup."
+description = "A containerized Runtipi app for verified backups through rclone."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Phil" }]
 dependencies = [
-    "typer>=0.12.0",
     "PyYAML>=6.0",
     "rich>=13.0.0",
     "apprise>=1.8.0",
-    "textual>=1.0.0",
 ]
-
-[project.scripts]
-runtipi-companion = "runtipi_companion.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0.0", "ruff>=0.6.0", "pre-commit>=3.5.0"]
@@ -28,9 +23,7 @@ build-backend = "hatchling.build"
 source = "vcs"
 
 [tool.hatch.version.raw-options]
-# PyPI/TestPyPI reject local version segments (the "+g<hash>" suffix) --
-# drop them so untagged builds (main-branch TestPyPI publishes) still get an
-# uploadable version like "1.0.1.dev1" instead of "1.0.1.dev1+g0cc0f4a45".
+# Keep container build versions stable when building from an untagged commit.
 local_scheme = "no-local-version"
 
 [tool.hatch.build.targets.wheel]
@@ -44,6 +37,6 @@ target-version = "py39"
 # Defaults (pyflakes + pycodestyle errors) plus import sorting, pyupgrade,
 # and bugbear.
 extend-select = ["I", "UP", "B"]
-# Keep typing.Optional: we support Python 3.9, and typer evaluates
-# annotations at runtime, where "X | None" doesn't exist before 3.10.
+# Keep typing.Optional because the package supports Python 3.9, where
+# ``X | None`` is not available at runtime.
 ignore = ["UP007"]

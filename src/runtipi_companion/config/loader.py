@@ -90,9 +90,7 @@ def load_config(path: Optional[str] = None) -> CompanionConfig:
     chosen = next((p for p in candidates if p.exists()), None)
     if chosen is None:
         searched = ", ".join(str(p) for p in candidates)
-        raise ConfigError(
-            f"No config file found. Searched: {searched}\n" f"Run 'runtipi-companion config init' to create one."
-        )
+        raise ConfigError(f"No config file found. Searched: {searched}")
     with open(chosen) as f:
         raw = yaml.safe_load(f) or {}
 
@@ -103,7 +101,7 @@ def load_config(path: Optional[str] = None) -> CompanionConfig:
     if cfg.version > CONFIG_VERSION:
         raise ConfigError(
             f"Config file {chosen} is version {cfg.version}, but this runtipi-companion "
-            f"only supports up to version {CONFIG_VERSION}. Upgrade with 'runtipi-companion self-update'."
+            f"app only supports up to version {CONFIG_VERSION}. Update the app before using this config."
         )
 
     if "runtipi" in raw:

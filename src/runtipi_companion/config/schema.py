@@ -11,8 +11,7 @@ DEFAULT_CONFIG_PATHS = [
 ]
 
 # Schema version written into config files as `version:`. Files without the
-# key are treated as version 1 (pre-versioning). Bump this together with a
-# new migration step in migrations.py whenever the config shape changes.
+# key are treated as version 1 (pre-versioning).
 CONFIG_VERSION = 4
 
 VALID_SCHEDULES = ("daily", "weekly", "monthly", "yearly")
@@ -180,6 +179,9 @@ class CompanionConfig:
     version: int = CONFIG_VERSION
     runtipi: RuntipiConfig = field(default_factory=RuntipiConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
+    # Legacy fields are parsed but never acted on by the app. They remain so
+    # configurations created by the former host CLI continue to load while
+    # host management moves to mistborn-bootstrap.
     security: SecurityConfig = field(default_factory=SecurityConfig)
     tailscale: TailscaleConfig = field(default_factory=TailscaleConfig)
     updates: UpdatesConfig = field(default_factory=UpdatesConfig)

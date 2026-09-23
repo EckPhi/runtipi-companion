@@ -229,4 +229,5 @@ __marimo__/
 *.vsix
 
 uv.lock
+!uv.lock
 .venv/

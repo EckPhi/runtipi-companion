@@ -1,9 +1,6 @@
-"""Configuration package: dataclasses (schema), YAML loading (loader), and
-the bundled example config (templates). Everything public is re-exported
-here so callers just use `from ..config import ...`."""
+"""Backup application configuration."""
 
 from .loader import load_config, validate_config
-from .migrations import migrate, migrate_file
 from .schema import (
     CONFIG_VERSION,
     DEFAULT_CONFIG_PATHS,
@@ -43,7 +40,5 @@ __all__ = [
     "UFWConfig",
     "UpdatesConfig",
     "load_config",
-    "migrate",
-    "migrate_file",
     "validate_config",
 ]

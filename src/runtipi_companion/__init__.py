@@ -1,4 +1,4 @@
-"""runtipi-companion: a companion CLI for Runtipi."""
+"""Runtipi Companion backup application."""
 
 from importlib.metadata import PackageNotFoundError, version
 
