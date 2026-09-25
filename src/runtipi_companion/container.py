@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import hmac
 import html
 import json
@@ -241,20 +240,6 @@ button:hover{{filter:brightness(1.08)}}table{{width:100%;border-collapse:collaps
 
 def build_handler(coordinator: BackupCoordinator, csrf_token: str):
     class WebHandler(BaseHTTPRequestHandler):
-        def _authorized(self) -> bool:
-            username = _env("UI_USERNAME", "")
-            password = _env("UI_PASSWORD", "")
-            if not username or not password:
-                self.send_error(503, "UI credentials are not configured")
-                return False
-            expected = "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode()
-            if not hmac.compare_digest(self.headers.get("Authorization", ""), expected):
-                self.send_response(401)
-                self.send_header("WWW-Authenticate", 'Basic realm="Runtipi Companion"')
-                self.end_headers()
-                return False
-            return True
-
         def _send_dashboard(self, message: str = "") -> None:
             body = _dashboard(coordinator, csrf_token, message)
             self.send_response(200)
@@ -276,14 +261,11 @@ def build_handler(coordinator: BackupCoordinator, csrf_token: str):
             if self.path != "/":
                 self.send_error(404)
                 return
-            if self._authorized():
-                self._send_dashboard()
+            self._send_dashboard()
 
         def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             if self.path != "/backup":
                 self.send_error(404)
-                return
-            if not self._authorized():
                 return
             length = min(int(self.headers.get("Content-Length", "0")), 4096)
             form = parse_qs(self.rfile.read(length).decode())

@@ -71,7 +71,7 @@ than be guessed at.
 
 ## Web app invariants
 
-- The dashboard requires configured Basic Auth credentials.
+- Dashboard access control belongs to Runtipi; do not add a second authentication layer.
 - State-changing routes require CSRF validation.
 - Only one backup may run at a time.
 - Never expose a restore action casually: restore replaces live app data and
