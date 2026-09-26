@@ -283,6 +283,12 @@ def build_handler(coordinator: BackupCoordinator, csrf_token: str):
             self.end_headers()
             self.wfile.write(body)
 
+        def _redirect_dashboard(self) -> None:
+            self.send_response(303)
+            self.send_header("Location", "/")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             if self.path == "/healthz":
                 body = b"ok\n"
@@ -308,11 +314,11 @@ def build_handler(coordinator: BackupCoordinator, csrf_token: str):
                 return
             schedule = form.get("schedule", [""])[0]
             try:
-                started = coordinator.start(schedule)
+                coordinator.start(schedule)
             except ValueError:
                 self.send_error(400, "Invalid schedule")
                 return
-            self._send_dashboard(f"{schedule.title()} backup started" if started else "A backup is already running")
+            self._redirect_dashboard()
 
         def log_message(self, format: str, *args) -> None:
             return

@@ -1,3 +1,4 @@
+import http.client
 import threading
 import urllib.request
 from datetime import datetime
@@ -123,3 +124,31 @@ def test_dashboard_refreshes_and_escapes_live_progress(tmp_path, monkeypatch):
     assert "unsafe&lt;script&gt;" in page
     assert "Started &lt;script&gt;" in page
     assert "unsafe<script>" not in page
+
+
+def test_backup_post_redirects_to_dashboard(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(container, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(container, "STATE_PATH", tmp_path / "state.json")
+    container.write_managed_config()
+    coordinator = container.BackupCoordinator(config_path)
+    monkeypatch.setattr(coordinator, "start", lambda schedule: True)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), container.build_handler(coordinator, "csrf-token"))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+    try:
+        connection.request(
+            "POST",
+            "/backup",
+            "csrf=csrf-token&schedule=daily",
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response = connection.getresponse()
+        assert response.status == 303
+        assert response.getheader("Location") == "/"
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join()
