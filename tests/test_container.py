@@ -52,6 +52,23 @@ def test_coordinator_rejects_invalid_or_concurrent_runs(tmp_path):
         coordinator.lock.release()
 
 
+def test_coordinator_persists_bounded_progress(tmp_path, monkeypatch):
+    monkeypatch.setattr(container, "STATE_PATH", tmp_path / "state.json")
+    coordinator = container.BackupCoordinator(tmp_path / "config.yaml")
+    outcome = {"status": "running"}
+
+    for index in range(55):
+        coordinator._update_progress(
+            outcome,
+            {"stage": "archiving", "app": f"app-{index}", "completed_apps": index, "total_apps": 55},
+        )
+
+    stored = container._load_state()["last_run"]
+    assert stored["app"] == "app-54"
+    assert stored["completed_apps"] == 54
+    assert len(stored["events"]) == 50
+
+
 def test_web_ui_relies_on_runtipi_access_control(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(container, "CONFIG_PATH", config_path)
@@ -72,7 +89,37 @@ def test_web_ui_relies_on_runtipi_access_control(tmp_path, monkeypatch):
         assert "Runtipi Companion" in page
         assert "Run daily" in page
         assert "encrypted:runtipi-backups" in page
+        assert "Backup progress" in page
+        assert "Diagnostics" in page
     finally:
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_dashboard_refreshes_and_escapes_live_progress(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(container, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(container, "STATE_PATH", tmp_path / "state.json")
+    container.write_managed_config()
+    container._set_state_value(
+        "last_run",
+        {
+            "status": "running",
+            "completed_apps": 1,
+            "total_apps": 4,
+            "app": "unsafe<script>",
+            "message": "Archiving unsafe<script>",
+            "events": [{"at": "now", "message": "Started <script>"}],
+        },
+    )
+    coordinator = container.BackupCoordinator(config_path)
+    coordinator.active_schedule = "daily"
+
+    page = container._dashboard(coordinator, "csrf-token").decode()
+
+    assert '<meta http-equiv="refresh" content="3">' in page
+    assert 'aria-valuenow="25"' in page
+    assert "unsafe&lt;script&gt;" in page
+    assert "Started &lt;script&gt;" in page
+    assert "unsafe<script>" not in page

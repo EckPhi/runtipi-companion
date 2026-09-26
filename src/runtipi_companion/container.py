@@ -118,6 +118,7 @@ class BackupCoordinator:
         self.config_path = config_path
         self.lock = threading.Lock()
         self.active_schedule: Optional[str] = None
+        self.progress_lock = threading.Lock()
 
     def start(self, schedule: str, *, scheduled: bool = False) -> bool:
         if schedule not in ("daily", "weekly", "monthly", "yearly"):
@@ -140,7 +141,9 @@ class BackupCoordinator:
         self._store_outcome(outcome)
         try:
             cfg = load_config(str(self.config_path))
-            created = run_backup(cfg, schedule, dry_run=False)
+            created = run_backup(
+                cfg, schedule, dry_run=False, progress=lambda update: self._update_progress(outcome, update)
+            )
             outcome.update(status="success", archives=len(created))
             notify(
                 cfg.notify,
@@ -161,6 +164,16 @@ class BackupCoordinator:
     @staticmethod
     def _store_outcome(outcome: dict) -> None:
         _set_state_value("last_run", outcome)
+
+    def _update_progress(self, outcome: dict, update: dict) -> None:
+        with self.progress_lock:
+            event = {
+                "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "message": str(update.get("message", update.get("stage", "Working"))),
+            }
+            outcome.update(update)
+            outcome["events"] = [*(outcome.get("events") or []), event][-50:]
+            self._store_outcome(outcome.copy())
 
 
 def _latest_backups(config_path: Path, limit: int = 20) -> list[dict]:
@@ -198,7 +211,8 @@ def _human_size(size: int) -> str:
 def _dashboard(coordinator: BackupCoordinator, csrf_token: str, message: str = "") -> bytes:
     state = _load_state()
     last = state.get("last_run") or {}
-    status = coordinator.active_schedule or last.get("status", "No backups recorded")
+    active = coordinator.active_schedule is not None
+    status = last.get("status", "No backups recorded")
     cfg = load_config(str(coordinator.config_path))
     remote = cfg.backup.remotes[0]
     rows = (
@@ -216,8 +230,22 @@ def _dashboard(coordinator: BackupCoordinator, csrf_token: str, message: str = "
         for schedule in ("daily", "weekly", "monthly", "yearly")
     )
     notice = f'<p class="notice">{html.escape(message)}</p>' if message else ""
+    total_apps = int(last.get("total_apps") or 0)
+    completed_apps = int(last.get("completed_apps") or 0)
+    percent = min(100, round(completed_apps * 100 / total_apps)) if total_apps else 0
+    progress_detail = html.escape(str(last.get("message") or last.get("stage") or "Waiting for progress"))
+    current_app = html.escape(str(last.get("app") or "—"))
+    error = (
+        f'<div class="error"><strong>Last error</strong><br>{html.escape(str(last["error"]))}</div>'
+        if last.get("error")
+        else ""
+    )
+    events = last.get("events") or []
+    event_log = "\n".join(f"{event.get('at', '')}  {event.get('message', '')}" for event in events)
+    debug = html.escape(event_log or "No diagnostic events recorded yet")
+    refresh = '<meta http-equiv="refresh" content="3">' if active else ""
     page = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{refresh}
 <title>Runtipi Companion</title><style>
 :root{{--bg:#0b1220;--panel:#131d30;--line:#26344d;--text:#eef4ff;--muted:#9fb0c9;--accent:#2dd4bf;--amber:#fbbf24}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:15px system-ui,sans-serif}}
@@ -226,14 +254,20 @@ main{{max-width:1100px;margin:auto;padding:32px 20px}}h1{{margin:0 0 6px;font-si
 .card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}}.value{{font-size:18px;font-weight:650}}
 button{{background:var(--accent);color:#06241f;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer;margin:4px}}
 button:hover{{filter:brightness(1.08)}}table{{width:100%;border-collapse:collapse}}th,td{{text-align:left;padding:10px;border-bottom:1px solid var(--line)}}
-.notice{{border-left:3px solid var(--amber);padding:10px 14px;background:var(--panel)}}code{{color:var(--accent)}}
+.notice,.error{{border-left:3px solid var(--amber);padding:10px 14px;background:var(--panel)}}code{{color:var(--accent)}}
+.progress{{height:12px;background:var(--line);border-radius:999px;overflow:hidden;margin:12px 0}}.progress span{{display:block;height:100%;background:var(--accent)}}
+pre{{background:#09101c;border:1px solid var(--line);border-radius:8px;padding:14px;overflow:auto;white-space:pre-wrap;max-height:320px}}
 </style></head><body><main><h1>Runtipi Companion</h1><p class="muted">Verified backups through rclone</p>{notice}
 <section class="grid"><div class="card"><div class="muted">Status</div><div class="value">{html.escape(str(status))}</div></div>
 <div class="card"><div class="muted">Scheduled hour</div><div class="value">{html.escape(_env('BACKUP_HOUR', '3'))}:00</div></div>
 <div class="card"><div class="muted">Remote</div><div class="value"><code>{html.escape(remote.rclone_remote)}</code></div></div>
 <div class="card"><div class="muted">Last finished</div><div class="value">{html.escape(last.get('finished_at', 'Never'))}</div></div></section>
+<section class="card"><h2>Backup progress</h2><div class="value">{progress_detail}</div>
+<div class="progress" role="progressbar" aria-valuenow="{percent}" aria-valuemin="0" aria-valuemax="100"><span style="width:{percent}%"></span></div>
+<div class="muted">{completed_apps} of {total_apps} apps complete · Current app: {current_app}</div>{error}</section>
 <section class="card"><h2>Run a backup</h2><form method="post" action="/backup"><input type="hidden" name="csrf" value="{csrf_token}">{buttons}</form></section>
 <section class="card" style="margin-top:14px"><h2>Recent local backups</h2><div style="overflow:auto"><table><thead><tr><th>App</th><th>Store</th><th>Archive</th><th>Size</th><th>Created</th></tr></thead><tbody>{rows}</tbody></table></div></section>
+<details class="card" style="margin-top:14px"><summary><strong>Diagnostics</strong></summary><pre>{debug}</pre></details>
 </main></body></html>"""
     return page.encode()
 

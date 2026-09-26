@@ -6,7 +6,7 @@ import time
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from rich.console import Console
 
@@ -133,6 +133,7 @@ def run_backup(
     local_only: bool = False,
     dry_run: bool = False,
     retention_override: Optional[int] = None,
+    progress: Optional[Callable[[dict], None]] = None,
 ) -> list:
     """Back up every matched app for `schedule`, prune local retention, then
     sync + prune each enabled remote that has a retention configured for
@@ -151,10 +152,12 @@ def run_backup(
         )
     stop = cfg.backup.stop_apps if stop_apps is None else stop_apps
 
+    _report_progress(progress, stage="discovering", message="Discovering installed apps")
     cli = RuntipiCLI(cfg.runtipi.path, cfg.runtipi.cli_path, dry_run=dry_run)
     allowlist = apps if apps else cfg.runtipi.apps
     app_refs = discover_apps(cfg.runtipi.path, allowlist)
     if not app_refs:
+        _report_progress(progress, stage="complete", total_apps=0, completed_apps=0, message="No apps matched")
         console.print("[yellow]No apps matched, nothing to back up.[/yellow]")
         return []
 
@@ -163,19 +166,64 @@ def run_backup(
     date_str = time.strftime("%Y-%m-%d")
 
     failures = []
-    for ref in app_refs:
+    total_apps = len(app_refs)
+    for index, ref in enumerate(app_refs, start=1):
+        _report_progress(
+            progress,
+            stage="preparing",
+            app=ref.ref,
+            current_app=index,
+            completed_apps=index - 1,
+            total_apps=total_apps,
+            message=f"Preparing {ref.ref}",
+        )
         try:
             _backup_one_app(
-                cfg, cli, ref, schedule, retention, local_backup_root, date_str, stop, dry_run, created_files
+                cfg,
+                cli,
+                ref,
+                schedule,
+                retention,
+                local_backup_root,
+                date_str,
+                stop,
+                dry_run,
+                created_files,
+                progress,
+            )
+            _report_progress(
+                progress,
+                stage="app-complete",
+                app=ref.ref,
+                current_app=index,
+                completed_apps=index,
+                total_apps=total_apps,
+                message=f"Completed {ref.ref}",
             )
         except (CommandError, BackupVerificationError) as e:
             # One broken app (e.g. runtipi-cli failing to stop it) must not
             # cancel every other app's backup. Record, move on, fail at end.
             console.print(f"[red]Backup of {ref.ref} failed:[/red] {e}")
             failures.append((ref.ref, e))
+            _report_progress(
+                progress,
+                stage="app-failed",
+                app=ref.ref,
+                current_app=index,
+                completed_apps=index,
+                total_apps=total_apps,
+                message=f"Failed {ref.ref}: {e}",
+            )
 
     if not local_only:
         # Sync whatever succeeded -- a partial backup on the remote beats none.
+        _report_progress(
+            progress,
+            stage="syncing",
+            completed_apps=total_apps,
+            total_apps=total_apps,
+            message="Syncing successful archives to configured remotes",
+        )
         sync_to_remotes(cfg, schedule, remotes=remotes, dry_run=dry_run)
 
     if failures:
@@ -186,6 +234,11 @@ def run_backup(
         )
 
     return created_files
+
+
+def _report_progress(progress: Optional[Callable[[dict], None]], **details) -> None:
+    if progress is not None:
+        progress(details)
 
 
 def _backup_one_app(
@@ -199,6 +252,7 @@ def _backup_one_app(
     stop: bool,
     dry_run: bool,
     created_files: list,
+    progress: Optional[Callable[[dict], None]] = None,
 ) -> None:
     app_backup_dir = local_backup_root / ref.store / ref.app_id
     app_backup_dir.mkdir(parents=True, exist_ok=True)
@@ -226,6 +280,7 @@ def _backup_one_app(
     stop_error = None
 
     if effective_stop and was_running:
+        _report_progress(progress, stage="stopping", app=ref.ref, message=f"Stopping {ref.ref}")
         console.print(f"Stopping {ref.ref}")
         try:
             cli.app_stop(ref.ref)
@@ -256,6 +311,7 @@ def _backup_one_app(
         if stop_error is not None:
             raise stop_error
 
+        _report_progress(progress, stage="archiving", app=ref.ref, message=f"Archiving {ref.ref}")
         console.print(f"Archiving {ref.ref} -> {dest_file}")
         verify_error = None
         if not dry_run:
@@ -296,6 +352,7 @@ def _backup_one_app(
         # re-raised only AFTER post_backup_command has had its chance to run.
         restart_error = None
         if stopped_by_us:
+            _report_progress(progress, stage="starting", app=ref.ref, message=f"Starting {ref.ref}")
             console.print(f"Starting {ref.ref}")
             try:
                 cli.app_start(ref.ref)

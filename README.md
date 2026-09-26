@@ -5,9 +5,11 @@ verified archives of installed app data, keeps independent local and remote
 retention policies, and transfers backups through the authenticated Remote
 Control API of the Rclone Mount app without a FUSE mount.
 
-The web dashboard shows scheduler status, the configured remote,
-the last run, and recent local archives. It can start daily, weekly, monthly,
-or yearly backups on demand. Only one backup runs at a time.
+The web dashboard shows scheduler status, live per-app backup progress, a
+bounded diagnostic event trail, the configured remote, the last run, and
+recent local archives. It refreshes while a backup is active and can start
+daily, weekly, monthly, or yearly backups on demand. Only one backup runs at a
+time.
 
 Dashboard access control is provided by Runtipi. Companion does not maintain a
 second set of web credentials.
