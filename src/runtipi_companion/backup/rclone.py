@@ -6,10 +6,9 @@ import http.client
 import json
 import os
 import shutil
+import socket
 import tempfile
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -20,6 +19,19 @@ from ..system.shell import run
 
 class RcloneAPIError(RuntimeError):
     pass
+
+
+class UnixHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection transported over a Unix domain socket."""
+
+    def __init__(self, socket_path: str, *, timeout: int):
+        super().__init__("localhost", timeout=timeout)
+        self.socket_path = socket_path
+
+    def connect(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.socket_path)
 
 
 class RcloneClient:
@@ -111,19 +123,40 @@ class RcloneRCClient:
         token = base64.b64encode(f"{self.username}:{self._password()}".encode()).decode()
         return f"Basic {token}"
 
+    def _connection(self, *, timeout: int) -> tuple[http.client.HTTPConnection, str]:
+        parsed = urllib.parse.urlsplit(self.url)
+        if parsed.scheme == "unix":
+            socket_path = urllib.parse.unquote(parsed.path)
+            if not socket_path.startswith("/"):
+                raise RcloneAPIError("rclone Unix socket endpoint must use an absolute path")
+            return UnixHTTPConnection(socket_path, timeout=timeout), ""
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise RcloneAPIError("rclone API endpoint must use http://, https://, or unix:///absolute/path")
+        connection_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        return connection_cls(parsed.hostname, parsed.port, timeout=timeout), parsed.path.rstrip("/")
+
     def _request(self, endpoint: str, payload: Optional[dict] = None) -> dict:
         body = json.dumps(payload or {}).encode()
-        request = urllib.request.Request(
-            f"{self.url}/{endpoint.lstrip('/')}",
-            data=body,
-            headers={"Authorization": self._auth_header(), "Content-Type": "application/json"},
-            method="POST",
-        )
+        connection, base_path = self._connection(timeout=60)
+        path = f"{base_path}/{endpoint.lstrip('/')}"
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                return json.loads(response.read() or b"{}")
-        except (urllib.error.URLError, json.JSONDecodeError) as e:
+            connection.request(
+                "POST",
+                path,
+                body=body,
+                headers={"Authorization": self._auth_header(), "Content-Type": "application/json"},
+            )
+            response = connection.getresponse()
+            detail = response.read()
+            if response.status >= 300:
+                raise RcloneAPIError(
+                    f"rclone API call {endpoint} failed ({response.status}): {detail.decode(errors='replace')}"
+                )
+            return json.loads(detail or b"{}")
+        except (OSError, http.client.HTTPException, json.JSONDecodeError) as e:
             raise RcloneAPIError(f"rclone API call {endpoint} failed: {e}") from e
+        finally:
+            connection.close()
 
     def _upload_file(self, source: Path, target: str) -> None:
         fs, remote_path = _split_remote(target)
@@ -136,10 +169,8 @@ class RcloneRCClient:
         ).encode()
         suffix = f"\r\n--{boundary}--\r\n".encode()
         query = urllib.parse.urlencode({"fs": fs, "remote": remote_dir})
-        parsed = urllib.parse.urlsplit(self.url)
-        connection_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-        connection = connection_cls(parsed.hostname, parsed.port, timeout=3600)
-        endpoint = f"{parsed.path.rstrip('/')}/operations/uploadfile?{query}"
+        connection, base_path = self._connection(timeout=3600)
+        endpoint = f"{base_path}/operations/uploadfile?{query}"
         try:
             connection.putrequest("POST", endpoint)
             connection.putheader("Authorization", self._auth_header())
@@ -208,16 +239,25 @@ class RcloneRCClient:
         fs, path = _split_remote(remote_path)
         encoded_fs = urllib.parse.quote(fs, safe=":")
         encoded_path = urllib.parse.quote(path, safe="/")
-        request = urllib.request.Request(
-            f"{self.url}/[{encoded_fs}]/{encoded_path}", headers={"Authorization": self._auth_header()}
-        )
+        connection, base_path = self._connection(timeout=3600)
+        endpoint = f"{base_path}/[{encoded_fs}]/{encoded_path}"
         local_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with urllib.request.urlopen(request, timeout=3600) as response, local_path.open("wb") as destination:
+            connection.request("GET", endpoint, headers={"Authorization": self._auth_header()})
+            response = connection.getresponse()
+            if response.status >= 300:
+                detail = response.read().decode(errors="replace")
+                raise RcloneAPIError(f"rclone download failed for {remote_path} ({response.status}): {detail}")
+            with local_path.open("wb") as destination:
                 shutil.copyfileobj(response, destination, length=1024 * 1024)
-        except (urllib.error.URLError, OSError) as e:
+        except RcloneAPIError:
+            local_path.unlink(missing_ok=True)
+            raise
+        except (OSError, http.client.HTTPException) as e:
             local_path.unlink(missing_ok=True)
             raise RcloneAPIError(f"rclone download failed for {remote_path}: {e}") from e
+        finally:
+            connection.close()
 
 
 def client_for_remote(remote: RemoteConfig, *, dry_run: bool = False):

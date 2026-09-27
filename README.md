@@ -16,9 +16,11 @@ read-only backup explorer lists every local archive with its app, store, size,
 and creation time; restore and delete actions remain intentionally unavailable.
 
 The configuration page controls automatic schedule enablement and hour, the
-rclone target, local and remote copies retained per schedule, and apps excluded
-from all-app runs. These dashboard settings persist under `/config` and take
-precedence over their installation-form defaults after the first save.
+rclone target and API endpoint, local and remote copies retained per schedule,
+and apps excluded from all-app runs. The endpoint accepts
+`http://host:port`, `https://host:port`, or a direct Unix socket such as
+`unix:///run/rclone/rc.sock`. These dashboard settings persist under `/config`
+and take precedence over their installation-form defaults after the first save.
 
 Dashboard access control is provided by Runtipi. Companion does not maintain a
 second set of web credentials.
@@ -27,8 +29,10 @@ second set of web credentials.
 
 Install the app from the
 [Mistborn app store](https://github.com/EckPhi/mistborn-store). Install and
-configure its Rclone Mount app first, then provide the rclone API credentials
-and target during Companion installation.
+configure its Rclone Mount app first, then provide the rclone API credentials,
+endpoint, and target during Companion installation. The store defaults to the
+authenticated host socket at `/run/rclone/rc.sock`; no extra nginx proxy is
+needed for Companion.
 
 The container mounts the Runtipi installation and Docker socket so it can
 consistently stop, archive, verify, and restart applications. Docker socket

@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from runtipi_companion.backup.rclone import RcloneAPIError, RcloneRCClient, client_for_remote, probe_remote_upload
+from runtipi_companion.backup.rclone import (
+    RcloneAPIError,
+    RcloneRCClient,
+    UnixHTTPConnection,
+    client_for_remote,
+    probe_remote_upload,
+)
 from runtipi_companion.config import RemoteConfig
 
 
@@ -23,6 +29,17 @@ def test_rc_client_requires_password_env(monkeypatch):
     client = RcloneRCClient("http://rclone:5533", "companion", "MISSING_RCLONE_SECRET")
     with pytest.raises(RcloneAPIError, match="MISSING_RCLONE_SECRET"):
         client.list_files("encrypted:backups")
+
+
+def test_rc_client_supports_unix_socket_endpoint(monkeypatch):
+    monkeypatch.setenv("RCLONE_SECRET", "secret")
+    client = RcloneRCClient("unix:///run/rclone/rc.sock", "companion", "RCLONE_SECRET")
+
+    connection, base_path = client._connection(timeout=60)
+
+    assert isinstance(connection, UnixHTTPConnection)
+    assert connection.socket_path == "/run/rclone/rc.sock"
+    assert base_path == ""
 
 
 def test_rc_list_files_uses_remote_and_path(monkeypatch):

@@ -15,6 +15,7 @@ def test_managed_container_config_uses_rc_api(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(container, "CONFIG_PATH", config_path)
     monkeypatch.setenv("RCLONE_REMOTE", "encrypted:server-backups")
+    monkeypatch.setenv("RCLONE_API_URL", "http://host.example:5572")
     monkeypatch.setenv("RCLONE_API_USERNAME", "backup-agent")
 
     container.write_managed_config()
@@ -22,7 +23,7 @@ def test_managed_container_config_uses_rc_api(tmp_path, monkeypatch):
     raw = yaml.safe_load(config_path.read_text())
     remote = raw["backup"]["remotes"][0]
     assert remote["rclone_remote"] == "encrypted:server-backups"
-    assert remote["api_url"] == "http://rclone:5533"
+    assert remote["api_url"] == "http://host.example:5572"
     assert remote["api_username"] == "backup-agent"
     assert remote["api_password_env"] == "RCLONE_API_PASSWORD"
     assert raw["backup"]["app_settings"]["runtipi-companion"]["keep_running"] is True
@@ -46,7 +47,12 @@ def test_dashboard_settings_render_managed_config_and_schedule(tmp_path, monkeyp
     monkeypatch.setattr(container, "CONFIG_PATH", config_path)
     monkeypatch.setattr(container, "SETTINGS_PATH", tmp_path / "settings.json")
     settings = container._default_settings()
-    settings.update(backup_hour=5, enabled_schedules=["daily"], rclone_remote="encrypted:custom-target")
+    settings.update(
+        backup_hour=5,
+        enabled_schedules=["daily"],
+        rclone_remote="encrypted:custom-target",
+        rclone_api_url="unix:///run/rclone/rc.sock",
+    )
     settings["local_retention"]["daily"] = 11
     settings["remote_retention"]["daily"] = 22
     container._save_settings(settings)
@@ -55,6 +61,7 @@ def test_dashboard_settings_render_managed_config_and_schedule(tmp_path, monkeyp
 
     raw = yaml.safe_load(config_path.read_text())
     assert raw["backup"]["remotes"][0]["rclone_remote"] == "encrypted:custom-target"
+    assert raw["backup"]["remotes"][0]["api_url"] == "unix:///run/rclone/rc.sock"
     assert raw["backup"]["schedules"]["daily"]["retention"] == 11
     assert raw["backup"]["remotes"][0]["schedules"]["daily"]["retention"] == 22
     assert container._due_schedules(datetime(2026, 9, 22, 5, 0), {}) == ["daily"]
@@ -257,6 +264,7 @@ def test_config_page_saves_validated_settings(tmp_path, monkeypatch):
             "csrf": "csrf-token",
             "backup_hour": "6",
             "rclone_remote": "encrypted:new-target/",
+            "rclone_api_url": "http://192.0.2.10:5572/",
             "enabled_schedule": ["daily", "weekly"],
             "excluded_app": "gitea:migrated",
         }
@@ -284,11 +292,13 @@ def test_config_page_saves_validated_settings(tmp_path, monkeypatch):
         assert settings["backup_hour"] == 6
         assert settings["enabled_schedules"] == ["daily", "weekly"]
         assert settings["rclone_remote"] == "encrypted:new-target"
+        assert settings["rclone_api_url"] == "http://192.0.2.10:5572"
         assert settings["excluded_apps"] == ["gitea:migrated"]
         assert settings["local_retention"]["monthly"] == 3
         assert settings["remote_retention"]["yearly"] == 4
         managed = yaml.safe_load(config_path.read_text())
         assert managed["backup"]["remotes"][0]["rclone_remote"] == "encrypted:new-target"
+        assert managed["backup"]["remotes"][0]["api_url"] == "http://192.0.2.10:5572"
     finally:
         server.shutdown()
         server.server_close()

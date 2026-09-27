@@ -13,7 +13,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
@@ -38,6 +38,7 @@ def _default_settings() -> dict:
         "backup_hour": int(_env("BACKUP_HOUR", "3")),
         "enabled_schedules": ["daily", "weekly", "monthly", "yearly"],
         "rclone_remote": _env("RCLONE_REMOTE", "encrypted:runtipi-backups"),
+        "rclone_api_url": _env("RCLONE_API_URL", "http://rclone:5533"),
         "local_retention": {
             "daily": int(_env("BACKUP_DAILY_RETENTION", "7")),
             "weekly": int(_env("BACKUP_WEEKLY_RETENTION", "4")),
@@ -61,7 +62,7 @@ def _load_settings() -> dict:
             saved = json.loads(SETTINGS_PATH.read_text())
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return defaults
-    for key in ("backup_hour", "enabled_schedules", "rclone_remote", "excluded_apps"):
+    for key in ("backup_hour", "enabled_schedules", "rclone_remote", "rclone_api_url", "excluded_apps"):
         if key in saved:
             defaults[key] = saved[key]
     for key in ("local_retention", "remote_retention"):
@@ -96,7 +97,7 @@ def write_managed_config() -> Path:
                 {
                     "name": "rclone-api",
                     "rclone_remote": settings["rclone_remote"],
-                    "api_url": _env("RCLONE_API_URL", "http://rclone:5533"),
+                    "api_url": settings["rclone_api_url"],
                     "api_username": _env("RCLONE_API_USERNAME", "rclone-admin"),
                     "api_password_env": "RCLONE_API_PASSWORD",
                     "schedules": {
@@ -400,6 +401,12 @@ def _settings_from_form(form: dict, installed_refs: set[str]) -> dict:
     remote = form.get("rclone_remote", [""])[0].strip().rstrip("/")
     if ":" not in remote or not remote.split(":", 1)[0]:
         raise ValueError("Backup target must use the remote:path format")
+    api_url = form.get("rclone_api_url", [""])[0].strip().rstrip("/")
+    parsed_api_url = urlsplit(api_url)
+    valid_http = parsed_api_url.scheme in ("http", "https") and bool(parsed_api_url.hostname)
+    valid_socket = parsed_api_url.scheme == "unix" and parsed_api_url.path.startswith("/")
+    if not (valid_http or valid_socket):
+        raise ValueError("Rclone API endpoint must use http://host:port, https://host:port, or unix:///absolute/path")
     enabled = [
         schedule
         for schedule in ("daily", "weekly", "monthly", "yearly")
@@ -410,6 +417,7 @@ def _settings_from_form(form: dict, installed_refs: set[str]) -> dict:
         "backup_hour": backup_hour,
         "enabled_schedules": enabled,
         "rclone_remote": remote,
+        "rclone_api_url": api_url,
         "local_retention": local_retention,
         "remote_retention": remote_retention,
         "excluded_apps": excluded,
@@ -467,6 +475,8 @@ button{{background:var(--accent);color:#06241f;border:0;border-radius:8px;paddin
 <section class="card"><h2>Schedule and target</h2>
 <p><label>Backup hour (0–23)<input type="number" name="backup_hour" min="0" max="23" required value="{settings['backup_hour']}"></label></p>
 <p><label>Rclone backup target<input type="text" name="rclone_remote" required value="{html.escape(settings['rclone_remote'], quote=True)}" placeholder="encrypted:runtipi-backups"></label></p>
+<p><label>Rclone API endpoint<input type="text" name="rclone_api_url" required value="{html.escape(settings['rclone_api_url'], quote=True)}" placeholder="unix:///run/rclone/rc.sock"></label></p>
+<p class="muted">Use <code>http://host:port</code>, <code>https://host:port</code>, or <code>unix:///absolute/path</code>.</p>
 {test_result}
 <p class="muted">Enabled schedules control automatic runs. Retained copies apply to automatic and manual backups.</p>
 <div style="overflow:auto"><table><thead><tr><th>Automatic schedule</th><th>Local copies</th><th>Remote copies</th></tr></thead><tbody>{schedule_rows}</tbody></table></div></section>
