@@ -250,6 +250,7 @@ def test_config_page_saves_validated_settings(tmp_path, monkeypatch):
             page = response.read().decode()
         assert "Configuration" in page
         assert "Excluded apps" in page
+        assert "Test rclone upload" in page
         assert "gitea:migrated" in page
 
         fields = {
@@ -289,6 +290,41 @@ def test_config_page_saves_validated_settings(tmp_path, monkeypatch):
         managed = yaml.safe_load(config_path.read_text())
         assert managed["backup"]["remotes"][0]["rclone_remote"] == "encrypted:new-target"
     finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_rclone_upload_test_route_reports_success(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(container, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(container, "STATE_PATH", tmp_path / "state.json")
+    container.write_managed_config()
+    tested = []
+    monkeypatch.setattr(
+        container, "probe_remote_upload", lambda remote: tested.append(remote) or "encrypted:test/probe"
+    )
+    coordinator = container.BackupCoordinator(config_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), container.build_handler(coordinator, "csrf-token"))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+    try:
+        connection.request(
+            "POST",
+            "/rclone-test",
+            "csrf=csrf-token",
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response = connection.getresponse()
+        assert response.status == 303
+        assert response.getheader("Location") == "/config"
+        assert len(tested) == 1
+        result = container._load_state()["rclone_test"]
+        assert result["status"] == "success"
+        assert "test file removed" in result["message"]
+    finally:
+        connection.close()
         server.shutdown()
         server.server_close()
         thread.join()

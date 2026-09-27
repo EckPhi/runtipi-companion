@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from runtipi_companion.backup.rclone import RcloneAPIError, RcloneRCClient, client_for_remote
+from runtipi_companion.backup.rclone import RcloneAPIError, RcloneRCClient, client_for_remote, probe_remote_upload
 from runtipi_companion.config import RemoteConfig
 
 
@@ -58,3 +58,43 @@ def test_rc_sync_filters_schedule_and_preserves_relative_path(tmp_path, monkeypa
     client.sync_dir(tmp_path, "encrypted:backups/host", include="*-daily-*.tar.gz")
 
     assert uploaded == [(daily, "encrypted:backups/host/store/app/app-daily-2026-09-22.tar.gz")]
+
+
+def test_remote_upload_uses_configured_target_and_cleans_up(monkeypatch):
+    remote = RemoteConfig(name="cloud", rclone_remote="encrypted:backups")
+    calls = []
+
+    class StubClient:
+        def sync_dir(self, source, target):
+            files = list(Path(source).iterdir())
+            assert len(files) == 1
+            assert files[0].read_text() == "runtipi-companion rclone upload test\n"
+            calls.append(("upload", target, files[0].name))
+
+        def delete_file(self, target):
+            calls.append(("delete", target))
+
+    monkeypatch.setattr("runtipi_companion.backup.rclone.client_for_remote", lambda config: StubClient())
+
+    target = probe_remote_upload(remote)
+
+    assert target.startswith("encrypted:backups/.runtipi-companion-test-")
+    assert calls == [("upload", "encrypted:backups", target.rsplit("/", 1)[1]), ("delete", target)]
+
+
+def test_remote_upload_attempts_cleanup_after_upload_failure(monkeypatch):
+    remote = RemoteConfig(name="cloud", rclone_remote="encrypted:backups")
+    deleted = []
+
+    class StubClient:
+        def sync_dir(self, source, target):
+            raise RcloneAPIError("broken pipe")
+
+        def delete_file(self, target):
+            deleted.append(target)
+
+    monkeypatch.setattr("runtipi_companion.backup.rclone.client_for_remote", lambda config: StubClient())
+
+    with pytest.raises(RcloneAPIError, match="broken pipe"):
+        probe_remote_upload(remote)
+    assert deleted[0].startswith("encrypted:backups/.runtipi-companion-test-")

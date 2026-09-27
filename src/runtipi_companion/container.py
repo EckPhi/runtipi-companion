@@ -17,6 +17,7 @@ from urllib.parse import parse_qs
 
 import yaml
 
+from .backup.rclone import probe_remote_upload
 from .backup.runner import discover_apps, run_backup
 from .config import load_config
 from .system.notify import notify
@@ -420,6 +421,16 @@ def _config_page(coordinator: BackupCoordinator, csrf_token: str) -> bytes:
     installed = _installed_apps(coordinator.config_path)
     enabled = set(settings["enabled_schedules"])
     excluded = set(settings["excluded_apps"])
+    rclone_test = _load_state().get("rclone_test") or {}
+    test_result = ""
+    if rclone_test:
+        test_class = "success" if rclone_test.get("status") == "success" else "error"
+        test_result = (
+            f'<p class="{test_class}"><strong>Last rclone test: '
+            f'{html.escape(str(rclone_test.get("status", "unknown")))}</strong><br>'
+            f'{html.escape(str(rclone_test.get("message", "")))}<br>'
+            f'<span class="muted">{html.escape(str(rclone_test.get("at", "")))}</span></p>'
+        )
     schedule_rows = "".join(
         "<tr>"
         f'<td><label><input type="checkbox" name="enabled_schedule" value="{schedule}"'
@@ -443,23 +454,28 @@ def _config_page(coordinator: BackupCoordinator, csrf_token: str) -> bytes:
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Configuration · Runtipi Companion</title><style>
-:root{{--bg:#0b1220;--panel:#131d30;--line:#26344d;--text:#eef4ff;--muted:#9fb0c9;--accent:#2dd4bf}}
+:root{{--bg:#0b1220;--panel:#131d30;--line:#26344d;--text:#eef4ff;--muted:#9fb0c9;--accent:#2dd4bf;--red:#fb7185}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:15px system-ui,sans-serif}}
 main{{max-width:900px;margin:auto;padding:32px 20px}}a{{color:var(--accent)}}.muted{{color:var(--muted)}}
 .card{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:20px}}
 table{{width:100%;border-collapse:collapse}}th,td{{text-align:left;padding:10px;border-bottom:1px solid var(--line)}}
 input[type=text],input[type=number]{{width:100%;padding:9px;background:#09101c;color:var(--text);border:1px solid var(--line);border-radius:6px}}
 button{{background:var(--accent);color:#06241f;border:0;border-radius:8px;padding:10px 16px;font-weight:700;cursor:pointer}}
+.success,.error{{border-left:3px solid var(--accent);padding:10px 14px;background:#09101c}}.error{{border-color:var(--red)}}
 </style></head><body><main><p><a href="/">← Dashboard</a></p><h1>Configuration</h1>
 <form method="post" action="/config"><input type="hidden" name="csrf" value="{csrf_token}">
 <section class="card"><h2>Schedule and target</h2>
 <p><label>Backup hour (0–23)<input type="number" name="backup_hour" min="0" max="23" required value="{settings['backup_hour']}"></label></p>
 <p><label>Rclone backup target<input type="text" name="rclone_remote" required value="{html.escape(settings['rclone_remote'], quote=True)}" placeholder="encrypted:runtipi-backups"></label></p>
+{test_result}
 <p class="muted">Enabled schedules control automatic runs. Retained copies apply to automatic and manual backups.</p>
 <div style="overflow:auto"><table><thead><tr><th>Automatic schedule</th><th>Local copies</th><th>Remote copies</th></tr></thead><tbody>{schedule_rows}</tbody></table></div></section>
 <section class="card"><h2>Excluded apps</h2><p class="muted">Excluded apps are skipped by all-app runs but remain available for individual backups.</p>
 <div style="overflow:auto"><table><thead><tr><th>App</th><th>Store</th><th>Exclude</th></tr></thead><tbody>{app_rows}</tbody></table></div></section>
-<p><button type="submit">Save configuration</button></p></form></main></body></html>"""
+<p><button type="submit">Save configuration</button></p></form>
+<form method="post" action="/rclone-test"><input type="hidden" name="csrf" value="{csrf_token}">
+<section class="card"><h2>Test rclone upload</h2><p class="muted">Uploads and verifies a small temporary file using the saved target, then deletes it.</p>
+<button type="submit">Run upload test</button></section></form></main></body></html>"""
     return page.encode()
 
 
@@ -504,13 +520,29 @@ def build_handler(coordinator: BackupCoordinator, csrf_token: str):
             self._send_dashboard()
 
         def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            if self.path not in ("/backup", "/config"):
+            if self.path not in ("/backup", "/config", "/rclone-test"):
                 self.send_error(404)
                 return
             length = min(int(self.headers.get("Content-Length", "0")), 4096)
             form = parse_qs(self.rfile.read(length).decode())
             if not hmac.compare_digest(form.get("csrf", [""])[0], csrf_token):
                 self.send_error(403, "Invalid CSRF token")
+                return
+            if self.path == "/rclone-test":
+                if not coordinator.lock.acquire(blocking=False):
+                    self.send_error(409, "A backup or rclone test is already running")
+                    return
+                try:
+                    cfg = load_config(str(coordinator.config_path))
+                    target = probe_remote_upload(cfg.backup.remotes[0])
+                    result = {"status": "success", "message": f"Upload verified and test file removed: {target}"}
+                except Exception as e:
+                    result = {"status": "failed", "message": str(e)}
+                finally:
+                    coordinator.lock.release()
+                result["at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+                _set_state_value("rclone_test", result)
+                self._redirect("/config")
                 return
             if self.path == "/config":
                 installed_refs = {ref.ref for ref in _installed_apps(coordinator.config_path)}

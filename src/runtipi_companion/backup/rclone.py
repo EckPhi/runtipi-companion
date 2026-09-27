@@ -6,11 +6,13 @@ import http.client
 import json
 import os
 import shutil
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 from ..config import RemoteConfig
 from ..system.shell import run
@@ -227,3 +229,25 @@ def client_for_remote(remote: RemoteConfig, *, dry_run: bool = False):
             dry_run=dry_run,
         )
     return RcloneClient(dry_run=dry_run)
+
+
+def probe_remote_upload(remote: RemoteConfig) -> str:
+    """Upload, verify, and remove a small probe through the configured transport."""
+    client = client_for_remote(remote)
+    filename = f".runtipi-companion-test-{uuid4().hex}.txt"
+    target_root = remote.rclone_remote.rstrip("/")
+    target = f"{target_root}/{filename}"
+    upload_succeeded = False
+    try:
+        with tempfile.TemporaryDirectory(prefix="runtipi-companion-") as temporary:
+            probe = Path(temporary) / filename
+            probe.write_text("runtipi-companion rclone upload test\n")
+            client.sync_dir(Path(temporary), target_root)
+            upload_succeeded = True
+    finally:
+        try:
+            client.delete_file(target)
+        except Exception:
+            if upload_succeeded:
+                raise
+    return target
