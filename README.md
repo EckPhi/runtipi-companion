@@ -17,7 +17,9 @@ and creation time; restore and delete actions remain intentionally unavailable.
 
 The configuration page controls automatic schedule enablement and hour, the
 rclone target and API endpoint, local and remote copies retained per schedule,
-and apps excluded from all-app runs. The endpoint accepts
+the mounted Runtipi path, and apps excluded from all-app runs. Its connection
+test checks the Runtipi layout and CLI, Docker socket, and app discovery. The
+rclone endpoint accepts
 `http://host:port`, `https://host:port`, or a direct Unix socket such as
 `unix:///run/rclone/rc.sock`. These dashboard settings persist under `/config`
 and take precedence over their installation-form defaults after the first save.

@@ -17,6 +17,7 @@ def test_managed_container_config_uses_rc_api(tmp_path, monkeypatch):
     monkeypatch.setenv("RCLONE_REMOTE", "encrypted:server-backups")
     monkeypatch.setenv("RCLONE_API_URL", "http://host.example:5572")
     monkeypatch.setenv("RCLONE_API_USERNAME", "backup-agent")
+    monkeypatch.setenv("RUNTIPI_PATH", "/mounted/runtipi")
 
     container.write_managed_config()
 
@@ -26,6 +27,7 @@ def test_managed_container_config_uses_rc_api(tmp_path, monkeypatch):
     assert remote["api_url"] == "http://host.example:5572"
     assert remote["api_username"] == "backup-agent"
     assert remote["api_password_env"] == "RCLONE_API_PASSWORD"
+    assert raw["runtipi"]["path"] == "/mounted/runtipi"
     assert raw["backup"]["app_settings"]["runtipi-companion"]["keep_running"] is True
     assert raw["backup"]["app_settings"]["rclone"]["keep_running"] is True
 
@@ -167,6 +169,12 @@ def test_web_ui_relies_on_runtipi_access_control(tmp_path, monkeypatch):
         assert 'value="gitea:migrated"' in page
         assert 'href="/backups"' in page
         assert 'href="/config"' in page
+        assert 'href="/favicon.jpg"' in page
+
+        with urllib.request.urlopen(f"{base_url}/favicon.jpg") as response:
+            favicon = response.read()
+            assert response.getheader("Content-Type") == "image/jpeg"
+        assert favicon.startswith(b"\xff\xd8\xff")
 
         with urllib.request.urlopen(f"{base_url}/backups") as response:
             explorer = response.read().decode()
@@ -257,12 +265,17 @@ def test_config_page_saves_validated_settings(tmp_path, monkeypatch):
             page = response.read().decode()
         assert "Configuration" in page
         assert "Excluded apps" in page
-        assert "Test rclone upload" in page
+        assert "Runtipi connection" in page
+        assert "Verify connection" in page
+        assert "Rclone" in page
+        assert "Run upload test" in page
+        assert 'form="rclone-test-form"' in page
         assert "gitea:migrated" in page
 
         fields = {
             "csrf": "csrf-token",
             "backup_hour": "6",
+            "runtipi_path": "/runtipi",
             "rclone_remote": "encrypted:new-target/",
             "rclone_api_url": "http://192.0.2.10:5572/",
             "enabled_schedule": ["daily", "weekly"],
@@ -286,10 +299,12 @@ def test_config_page_saves_validated_settings(tmp_path, monkeypatch):
         response = connection.getresponse()
         assert response.status == 303
         assert response.getheader("Location") == "/config"
+        response.read()
         connection.close()
 
         settings = container._load_settings()
         assert settings["backup_hour"] == 6
+        assert settings["runtipi_path"] == "/runtipi"
         assert settings["enabled_schedules"] == ["daily", "weekly"]
         assert settings["rclone_remote"] == "encrypted:new-target"
         assert settings["rclone_api_url"] == "http://192.0.2.10:5572"
@@ -299,6 +314,7 @@ def test_config_page_saves_validated_settings(tmp_path, monkeypatch):
         managed = yaml.safe_load(config_path.read_text())
         assert managed["backup"]["remotes"][0]["rclone_remote"] == "encrypted:new-target"
         assert managed["backup"]["remotes"][0]["api_url"] == "http://192.0.2.10:5572"
+        assert managed["runtipi"]["path"] == "/runtipi"
     finally:
         server.shutdown()
         server.server_close()
@@ -329,10 +345,85 @@ def test_rclone_upload_test_route_reports_success(tmp_path, monkeypatch):
         response = connection.getresponse()
         assert response.status == 303
         assert response.getheader("Location") == "/config"
+        response.read()
         assert len(tested) == 1
         result = container._load_state()["rclone_test"]
         assert result["status"] == "success"
         assert "test file removed" in result["message"]
+        connection.request("GET", "/config")
+        page_response = connection.getresponse()
+        page = page_response.read().decode()
+        assert page.index("Run upload test") < page.index("Last rclone test: success")
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_verify_runtipi_connection_checks_layout_cli_docker_and_apps(tmp_path, monkeypatch):
+    runtipi_path = tmp_path / "runtipi"
+    (runtipi_path / "apps" / "migrated" / "gitea").mkdir(parents=True)
+    (runtipi_path / "app-data").mkdir()
+
+    class StubCLI:
+        cli_path = str(runtipi_path / "runtipi-cli")
+
+        def __init__(self, path):
+            assert path == str(runtipi_path)
+
+        def version(self):
+            return "4.10.1"
+
+    class DockerResult:
+        ok = True
+        stdout = "28.4.0\n"
+        stderr = ""
+
+    monkeypatch.setattr(container, "RuntipiCLI", StubCLI)
+    monkeypatch.setattr(container, "run_command", lambda *args, **kwargs: DockerResult())
+
+    message = container._verify_runtipi_connection(str(runtipi_path))
+
+    assert message == "Connected to Runtipi 4.10.1; Docker 28.4.0; discovered 1 installed apps"
+
+
+def test_runtipi_connection_test_route_reports_result(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(container, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(container, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(container, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setenv("RUNTIPI_PATH", "/runtipi")
+    container.write_managed_config()
+    checked = []
+    monkeypatch.setattr(
+        container,
+        "_verify_runtipi_connection",
+        lambda path: checked.append(path) or "Connected to Runtipi test",
+    )
+    coordinator = container.BackupCoordinator(config_path)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), container.build_handler(coordinator, "csrf-token"))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+    try:
+        connection.request(
+            "POST",
+            "/runtipi-test",
+            "csrf=csrf-token",
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response = connection.getresponse()
+        assert response.status == 303
+        assert response.getheader("Location") == "/config"
+        response.read()
+        assert checked == ["/runtipi"]
+        result = container._load_state()["runtipi_test"]
+        assert result["status"] == "success"
+        assert result["message"] == "Connected to Runtipi test"
+        connection.request("GET", "/config")
+        page = connection.getresponse().read().decode()
+        assert page.index("Verify connection") < page.index("Last Runtipi test: success")
     finally:
         connection.close()
         server.shutdown()

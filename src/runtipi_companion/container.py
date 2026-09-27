@@ -21,10 +21,13 @@ from .backup.rclone import probe_remote_upload
 from .backup.runner import discover_apps, run_backup
 from .config import load_config
 from .system.notify import notify
+from .system.runtipi_cli import RuntipiCLI
+from .system.shell import run as run_command
 
 CONFIG_PATH = Path(os.environ.get("RUNTIPI_COMPANION_CONFIG", "/config/config.yaml"))
 STATE_PATH = Path(os.environ.get("RUNTIPI_COMPANION_STATE", "/config/scheduler-state.json"))
 SETTINGS_PATH = Path(os.environ.get("RUNTIPI_COMPANION_SETTINGS", "/config/dashboard-settings.json"))
+FAVICON_PATH = Path(__file__).with_name("static") / "favicon.jpg"
 STATE_LOCK = threading.Lock()
 SETTINGS_LOCK = threading.Lock()
 
@@ -35,6 +38,7 @@ def _env(name: str, default: str) -> str:
 
 def _default_settings() -> dict:
     return {
+        "runtipi_path": _env("RUNTIPI_PATH", "/runtipi"),
         "backup_hour": int(_env("BACKUP_HOUR", "3")),
         "enabled_schedules": ["daily", "weekly", "monthly", "yearly"],
         "rclone_remote": _env("RCLONE_REMOTE", "encrypted:runtipi-backups"),
@@ -62,7 +66,14 @@ def _load_settings() -> dict:
             saved = json.loads(SETTINGS_PATH.read_text())
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return defaults
-    for key in ("backup_hour", "enabled_schedules", "rclone_remote", "rclone_api_url", "excluded_apps"):
+    for key in (
+        "runtipi_path",
+        "backup_hour",
+        "enabled_schedules",
+        "rclone_remote",
+        "rclone_api_url",
+        "excluded_apps",
+    ):
         if key in saved:
             defaults[key] = saved[key]
     for key in ("local_retention", "remote_retention"):
@@ -83,7 +94,7 @@ def write_managed_config() -> Path:
     settings = _load_settings()
     config = {
         "version": 4,
-        "runtipi": {"path": _env("RUNTIPI_PATH", "/runtipi"), "apps": []},
+        "runtipi": {"path": settings["runtipi_path"], "apps": []},
         "backup": {
             "local_path": _env("BACKUP_LOCAL_PATH", "/runtipi/backups"),
             "host_label": os.environ.get("BACKUP_HOST_LABEL") or None,
@@ -333,7 +344,7 @@ def _dashboard(coordinator: BackupCoordinator, csrf_token: str, message: str = "
     debug = html.escape(event_log or "No diagnostic events recorded yet")
     refresh = '<meta http-equiv="refresh" content="3">' if active else ""
     page = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{refresh}
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.jpg" type="image/jpeg">{refresh}
 <title>Runtipi Companion</title><style>
 :root{{--bg:#0b1220;--panel:#131d30;--line:#26344d;--text:#eef4ff;--muted:#9fb0c9;--accent:#2dd4bf;--amber:#fbbf24}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:15px system-ui,sans-serif}}
@@ -367,7 +378,7 @@ def _backup_explorer(coordinator: BackupCoordinator) -> bytes:
     total_size = sum(item["size"] for item in backups)
     rows = _backup_rows(backups)
     page = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.jpg" type="image/jpeg">
 <title>Backup Explorer · Runtipi Companion</title><style>
 :root{{--bg:#0b1220;--panel:#131d30;--line:#26344d;--text:#eef4ff;--muted:#9fb0c9;--accent:#2dd4bf}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:15px system-ui,sans-serif}}
@@ -407,6 +418,9 @@ def _settings_from_form(form: dict, installed_refs: set[str]) -> dict:
     valid_socket = parsed_api_url.scheme == "unix" and parsed_api_url.path.startswith("/")
     if not (valid_http or valid_socket):
         raise ValueError("Rclone API endpoint must use http://host:port, https://host:port, or unix:///absolute/path")
+    runtipi_path = form.get("runtipi_path", [""])[0].strip().rstrip("/") or "/"
+    if not Path(runtipi_path).is_absolute():
+        raise ValueError("Runtipi path must be absolute")
     enabled = [
         schedule
         for schedule in ("daily", "weekly", "monthly", "yearly")
@@ -414,6 +428,7 @@ def _settings_from_form(form: dict, installed_refs: set[str]) -> dict:
     ]
     excluded = sorted(set(form.get("excluded_app", [])) & installed_refs)
     return {
+        "runtipi_path": runtipi_path,
         "backup_hour": backup_hour,
         "enabled_schedules": enabled,
         "rclone_remote": remote,
@@ -424,12 +439,37 @@ def _settings_from_form(form: dict, installed_refs: set[str]) -> dict:
     }
 
 
+def _verify_runtipi_connection(runtipi_path: str) -> str:
+    root = Path(runtipi_path)
+    if not root.is_dir():
+        raise RuntimeError(f"Runtipi path does not exist or is not a directory: {root}")
+    missing = [name for name in ("apps", "app-data") if not (root / name).is_dir()]
+    if missing:
+        raise RuntimeError(f"Runtipi path is missing required directories: {', '.join(missing)}")
+    cli = RuntipiCLI(str(root))
+    version = cli.version()
+    if not version:
+        raise RuntimeError(f"runtipi-cli did not return a version: {cli.cli_path}")
+    docker = run_command(
+        ["docker", "info", "--format", "{{.ServerVersion}}"],
+        dry_run=False,
+        quiet=True,
+        check=False,
+    )
+    if not docker.ok or not docker.stdout.strip():
+        detail = docker.stderr.strip() or "Docker did not return a server version"
+        raise RuntimeError(f"Docker socket check failed: {detail}")
+    apps = discover_apps(str(root))
+    return f"Connected to Runtipi {version}; Docker {docker.stdout.strip()}; discovered {len(apps)} installed apps"
+
+
 def _config_page(coordinator: BackupCoordinator, csrf_token: str) -> bytes:
     settings = _load_settings()
     installed = _installed_apps(coordinator.config_path)
     enabled = set(settings["enabled_schedules"])
     excluded = set(settings["excluded_apps"])
     rclone_test = _load_state().get("rclone_test") or {}
+    runtipi_test = _load_state().get("runtipi_test") or {}
     test_result = ""
     if rclone_test:
         test_class = "success" if rclone_test.get("status") == "success" else "error"
@@ -438,6 +478,15 @@ def _config_page(coordinator: BackupCoordinator, csrf_token: str) -> bytes:
             f'{html.escape(str(rclone_test.get("status", "unknown")))}</strong><br>'
             f'{html.escape(str(rclone_test.get("message", "")))}<br>'
             f'<span class="muted">{html.escape(str(rclone_test.get("at", "")))}</span></p>'
+        )
+    runtipi_test_result = ""
+    if runtipi_test:
+        test_class = "success" if runtipi_test.get("status") == "success" else "error"
+        runtipi_test_result = (
+            f'<p class="{test_class}"><strong>Last Runtipi test: '
+            f'{html.escape(str(runtipi_test.get("status", "unknown")))}</strong><br>'
+            f'{html.escape(str(runtipi_test.get("message", "")))}<br>'
+            f'<span class="muted">{html.escape(str(runtipi_test.get("at", "")))}</span></p>'
         )
     schedule_rows = "".join(
         "<tr>"
@@ -460,7 +509,7 @@ def _config_page(coordinator: BackupCoordinator, csrf_token: str) -> bytes:
         or '<tr><td colspan="3" class="muted">No installed apps discovered</td></tr>'
     )
     page = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.jpg" type="image/jpeg">
 <title>Configuration · Runtipi Companion</title><style>
 :root{{--bg:#0b1220;--panel:#131d30;--line:#26344d;--text:#eef4ff;--muted:#9fb0c9;--accent:#2dd4bf;--red:#fb7185}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:15px system-ui,sans-serif}}
@@ -470,22 +519,30 @@ table{{width:100%;border-collapse:collapse}}th,td{{text-align:left;padding:10px;
 input[type=text],input[type=number]{{width:100%;padding:9px;background:#09101c;color:var(--text);border:1px solid var(--line);border-radius:6px}}
 button{{background:var(--accent);color:#06241f;border:0;border-radius:8px;padding:10px 16px;font-weight:700;cursor:pointer}}
 .success,.error{{border-left:3px solid var(--accent);padding:10px 14px;background:#09101c}}.error{{border-color:var(--red)}}
+.actions{{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}}
 </style></head><body><main><p><a href="/">← Dashboard</a></p><h1>Configuration</h1>
 <form method="post" action="/config"><input type="hidden" name="csrf" value="{csrf_token}">
-<section class="card"><h2>Schedule and target</h2>
+<section class="card"><h2>Runtipi connection</h2>
+<p><label>Mounted Runtipi path<input type="text" name="runtipi_path" required value="{html.escape(settings['runtipi_path'], quote=True)}" placeholder="/runtipi"></label></p>
+<p class="muted">This is the installation path inside Companion. The host path is selected when installing the app.</p>
+<div class="actions"><button type="submit" form="runtipi-test-form">Verify connection</button><span class="muted">Checks the installation layout, CLI, Docker socket, and installed-app discovery.</span></div>
+{runtipi_test_result}</section>
+<section class="card"><h2>Schedule and retention</h2>
 <p><label>Backup hour (0–23)<input type="number" name="backup_hour" min="0" max="23" required value="{settings['backup_hour']}"></label></p>
-<p><label>Rclone backup target<input type="text" name="rclone_remote" required value="{html.escape(settings['rclone_remote'], quote=True)}" placeholder="encrypted:runtipi-backups"></label></p>
-<p><label>Rclone API endpoint<input type="text" name="rclone_api_url" required value="{html.escape(settings['rclone_api_url'], quote=True)}" placeholder="unix:///run/rclone/rc.sock"></label></p>
-<p class="muted">Use <code>http://host:port</code>, <code>https://host:port</code>, or <code>unix:///absolute/path</code>.</p>
-{test_result}
 <p class="muted">Enabled schedules control automatic runs. Retained copies apply to automatic and manual backups.</p>
 <div style="overflow:auto"><table><thead><tr><th>Automatic schedule</th><th>Local copies</th><th>Remote copies</th></tr></thead><tbody>{schedule_rows}</tbody></table></div></section>
+<section class="card"><h2>Rclone</h2>
+<p><label>Backup target<input type="text" name="rclone_remote" required value="{html.escape(settings['rclone_remote'], quote=True)}" placeholder="encrypted:runtipi-backups"></label></p>
+<p><label>API endpoint<input type="text" name="rclone_api_url" required value="{html.escape(settings['rclone_api_url'], quote=True)}" placeholder="unix:///run/rclone/rc.sock"></label></p>
+<p class="muted">Use <code>http://host:port</code>, <code>https://host:port</code>, or <code>unix:///absolute/path</code>. The test uses the last saved values.</p>
+<div class="actions"><button type="submit" form="rclone-test-form">Run upload test</button><span class="muted">Uploads, verifies, and removes a small temporary file.</span></div>
+{test_result}</section>
 <section class="card"><h2>Excluded apps</h2><p class="muted">Excluded apps are skipped by all-app runs but remain available for individual backups.</p>
 <div style="overflow:auto"><table><thead><tr><th>App</th><th>Store</th><th>Exclude</th></tr></thead><tbody>{app_rows}</tbody></table></div></section>
 <p><button type="submit">Save configuration</button></p></form>
-<form method="post" action="/rclone-test"><input type="hidden" name="csrf" value="{csrf_token}">
-<section class="card"><h2>Test rclone upload</h2><p class="muted">Uploads and verifies a small temporary file using the saved target, then deletes it.</p>
-<button type="submit">Run upload test</button></section></form></main></body></html>"""
+<form id="rclone-test-form" method="post" action="/rclone-test"><input type="hidden" name="csrf" value="{csrf_token}"></form>
+<form id="runtipi-test-form" method="post" action="/runtipi-test"><input type="hidden" name="csrf" value="{csrf_token}"></form>
+</main></body></html>"""
     return page.encode()
 
 
@@ -500,6 +557,15 @@ def build_handler(coordinator: BackupCoordinator, csrf_token: str):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_favicon(self) -> None:
+            body = FAVICON_PATH.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=86400")
             self.end_headers()
             self.wfile.write(body)
 
@@ -519,6 +585,9 @@ def build_handler(coordinator: BackupCoordinator, csrf_token: str):
                 self.wfile.write(body)
                 return
             if self.path != "/":
+                if self.path == "/favicon.jpg":
+                    self._send_favicon()
+                    return
                 if self.path == "/backups":
                     self._send_html(_backup_explorer(coordinator))
                     return
@@ -530,13 +599,28 @@ def build_handler(coordinator: BackupCoordinator, csrf_token: str):
             self._send_dashboard()
 
         def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            if self.path not in ("/backup", "/config", "/rclone-test"):
+            if self.path not in ("/backup", "/config", "/rclone-test", "/runtipi-test"):
                 self.send_error(404)
                 return
             length = min(int(self.headers.get("Content-Length", "0")), 4096)
             form = parse_qs(self.rfile.read(length).decode())
             if not hmac.compare_digest(form.get("csrf", [""])[0], csrf_token):
                 self.send_error(403, "Invalid CSRF token")
+                return
+            if self.path == "/runtipi-test":
+                if not coordinator.lock.acquire(blocking=False):
+                    self.send_error(409, "A backup or connection test is already running")
+                    return
+                try:
+                    message = _verify_runtipi_connection(_load_settings()["runtipi_path"])
+                    result = {"status": "success", "message": message}
+                except Exception as e:
+                    result = {"status": "failed", "message": str(e)}
+                finally:
+                    coordinator.lock.release()
+                result["at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+                _set_state_value("runtipi_test", result)
+                self._redirect("/config")
                 return
             if self.path == "/rclone-test":
                 if not coordinator.lock.acquire(blocking=False):
