@@ -77,7 +77,8 @@ def discover_apps(runtipi_path: str, allowlist: Optional[list] = None) -> list:
         for app_dir in sorted(store_dir.iterdir()):
             if not app_dir.is_dir():
                 continue
-            if allowlist and app_dir.name not in allowlist:
+            app_ref = f"{app_dir.name}:{store_dir.name}"
+            if allowlist is not None and app_dir.name not in allowlist and app_ref not in allowlist:
                 continue
             refs.append(AppRef(store=store_dir.name, app_id=app_dir.name))
     return refs
@@ -154,7 +155,7 @@ def run_backup(
 
     _report_progress(progress, stage="discovering", message="Discovering installed apps")
     cli = RuntipiCLI(cfg.runtipi.path, cfg.runtipi.cli_path, dry_run=dry_run)
-    allowlist = apps if apps else cfg.runtipi.apps
+    allowlist = apps if apps is not None else (cfg.runtipi.apps or None)
     app_refs = discover_apps(cfg.runtipi.path, allowlist)
     if not app_refs:
         _report_progress(progress, stage="complete", total_apps=0, completed_apps=0, message="No apps matched")

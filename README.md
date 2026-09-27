@@ -11,6 +11,15 @@ recent local archives. It refreshes while a backup is active and can start
 daily, weekly, monthly, or yearly backups on demand. Only one backup runs at a
 time.
 
+Installed apps are listed with an individual daily backup action. A separate
+read-only backup explorer lists every local archive with its app, store, size,
+and creation time; restore and delete actions remain intentionally unavailable.
+
+The configuration page controls automatic schedule enablement and hour, the
+rclone target, local and remote copies retained per schedule, and apps excluded
+from all-app runs. These dashboard settings persist under `/config` and take
+precedence over their installation-form defaults after the first save.
+
 Dashboard access control is provided by Runtipi. Companion does not maintain a
 second set of web credentials.
 
