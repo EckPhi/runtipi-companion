@@ -248,6 +248,35 @@ def test_post_backup_command_runs_even_when_restart_fails(tmp_path, monkeypatch)
     ], "post_backup_command must still run even though the restart failed (container correctly reported as not running)"
 
 
+def test_restart_timeout_does_not_block_the_next_app(tmp_path, monkeypatch):
+    runtipi = _seed(tmp_path, app_id="broken")
+    _seed(tmp_path, app_id="healthy")
+    cfg = _cfg(tmp_path, runtipi)
+    stub = StubCLI()
+
+    def start_with_timeout(ref):
+        stub.start_calls.append(ref)
+        if ref == "broken:migrated":
+            raise CommandError(["runtipi-cli", "app", "start", ref], 124, "timed out after 360 seconds")
+        app_id, store = ref.split(":")
+        stub.running[(store, app_id)] = True
+
+    stub.app_start = start_with_timeout
+    monkeypatch.setattr(runner, "RuntipiCLI", lambda *a, **k: stub)
+    monkeypatch.setattr(
+        runner,
+        "resolve_app_settings",
+        lambda cfg, app_id, store: app_settings_mod.ResolvedAppSettings(),
+    )
+    progress = []
+
+    with pytest.raises(runner.BackupRunError, match="1 of 2.*broken"):
+        runner.run_backup(cfg, "daily", local_only=True, dry_run=True, progress=progress.append)
+
+    assert stub.start_calls == ["broken:migrated", "healthy:migrated"]
+    assert any(item.get("stage") == "app-complete" and item.get("app") == "healthy:migrated" for item in progress)
+
+
 def test_post_backup_command_after_restart_when_app_was_stopped(tmp_path, monkeypatch):
     """With keep_running=False (default), the app gets stopped for the
     archive -- post_backup_command must run only after it's back up."""

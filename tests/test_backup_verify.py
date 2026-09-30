@@ -3,7 +3,19 @@ import tarfile
 import pytest
 
 from runtipi_companion.backup import BackupVerificationError, verify_archive
+from runtipi_companion.backup import runner as runner_mod
+from runtipi_companion.backup.app_settings import ResolvedAppSettings
 from runtipi_companion.backup.retention import parse_backup_filename, select_prunable
+
+
+@pytest.fixture(autouse=True)
+def _default_app_settings(monkeypatch):
+    """Backup-runner tests must not query the developer's Docker daemon."""
+    monkeypatch.setattr(
+        runner_mod,
+        "resolve_app_settings",
+        lambda cfg, app_id, store: ResolvedAppSettings(),
+    )
 
 
 def _make_archive(path, content=b"x" * 4096):

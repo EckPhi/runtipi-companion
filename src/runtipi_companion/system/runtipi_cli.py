@@ -7,6 +7,8 @@ from typing import Optional
 
 from .shell import CommandError, RunResult, console, run
 
+APP_START_TIMEOUT_SECONDS = 360
+
 
 class RuntipiCLIError(RuntimeError):
     pass
@@ -88,7 +90,11 @@ class RuntipiCLI:
     # --- app management ---
 
     def app_start(self, app_ref: str) -> RunResult:
-        return self._run(["app", "start", app_ref])
+        # Runtipi waits for the queued lifecycle event to finish. A broken
+        # app can otherwise leave this process waiting forever, which also
+        # keeps Companion's single-backup lock held forever. Runtipi's
+        # default event timeout is five minutes, with a small grace period.
+        return self._run(["app", "start", app_ref], timeout=APP_START_TIMEOUT_SECONDS)
 
     def app_stop(self, app_ref: str) -> RunResult:
         return self._run(["app", "stop", app_ref])

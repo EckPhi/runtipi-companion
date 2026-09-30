@@ -4,8 +4,19 @@ import tarfile
 import pytest
 
 from runtipi_companion.backup import restore as restore_mod
+from runtipi_companion.backup.app_settings import ResolvedAppSettings
 from runtipi_companion.config import CompanionConfig
 from runtipi_companion.system.shell import CommandError
+
+
+@pytest.fixture(autouse=True)
+def _default_app_settings(monkeypatch):
+    """Restore tests must not query the developer's Docker daemon."""
+    monkeypatch.setattr(
+        restore_mod,
+        "resolve_app_settings",
+        lambda cfg, app_id, store: ResolvedAppSettings(),
+    )
 
 
 def _seed_runtipi(tmp_path, apps):

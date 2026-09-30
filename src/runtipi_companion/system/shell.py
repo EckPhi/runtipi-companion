@@ -96,6 +96,7 @@ def run(
     input: Optional[str] = None,
     quiet: bool = False,
     interactive: bool = False,
+    timeout: Optional[float] = None,
 ) -> RunResult:
     """Run a shell command, honoring dry-run mode.
 
@@ -131,7 +132,7 @@ def run(
 
     try:
         if interactive:
-            proc = subprocess.run(full_cmd, cwd=cwd)
+            proc = subprocess.run(full_cmd, cwd=cwd, timeout=timeout)
             returncode, stdout, stderr = proc.returncode, "", ""
             if check and returncode != 0:
                 raise CommandError(full_cmd, returncode, "")
@@ -140,7 +141,9 @@ def run(
         # repaints over it, capture swallows it) -- authenticate first.
         if full_cmd[0] == "sudo":
             _ensure_sudo_credentials(full_cmd)
-        if _should_stream(quiet=quiet, interactive=interactive, input=input):
+        # The line-oriented live renderer can block waiting for output, so a
+        # bounded command uses subprocess.run's timeout-aware capture path.
+        if timeout is None and _should_stream(quiet=quiet, interactive=interactive, input=input):
             returncode, merged = _stream(full_cmd, cwd)
             # stderr was merged into the stream; expose the merged text on
             # both fields so failure paths that print .stderr still work.
@@ -152,8 +155,19 @@ def run(
                 input=input,
                 capture_output=True,
                 text=True,
+                timeout=timeout,
             )
             returncode, stdout, stderr = proc.returncode, proc.stdout or "", proc.stderr or ""
+    except subprocess.TimeoutExpired as e:
+        stdout = e.stdout.decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        stderr = e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+        detail = f"Command timed out after {timeout:g} seconds"
+        captured = "\n".join(part for part in (stdout, stderr) if part).strip()
+        if captured:
+            detail = f"{detail}\n{captured}"
+        # 124 is the conventional timeout exit status and lets existing
+        # CommandError handling isolate this app and continue the backup.
+        raise CommandError(full_cmd, 124, detail) from e
     except FileNotFoundError as e:
         # Missing binary (docker, rclone, tailscale, ...) shouldn't produce a
         # raw Python traceback -- surface it the same way a failed command

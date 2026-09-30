@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from runtipi_companion.system import shell
 
 
@@ -48,6 +50,20 @@ def test_run_interactive_failure_raises_clean_commanderror(monkeypatch):
     except shell.CommandError as e:
         assert e.returncode == 3
         assert e.stderr == ""
+
+
+def test_run_timeout_becomes_command_error(monkeypatch):
+    def fake_subprocess_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"], output="still starting", stderr="unhealthy")
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+
+    with pytest.raises(shell.CommandError, match="timed out after 30 seconds") as exc_info:
+        shell.run(["runtipi-cli", "app", "start", "broken:migrated"], quiet=True, timeout=30)
+
+    assert exc_info.value.returncode == 124
+    assert "still starting" in exc_info.value.stderr
+    assert "unhealthy" in exc_info.value.stderr
 
 
 def test_stream_collapses_on_success(monkeypatch):
